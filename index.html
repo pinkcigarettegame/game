@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pink Cigarette World</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Start Screen -->
+    <div id="start-screen">
+        <h1>🚬 Pink Cigarette World</h1>
+        <p>Click to Play</p>
+        <div class="controls-info">
+            <p><strong>WASD</strong> - Move | <strong>Space</strong> - Jump/Swim Up | <strong>Shift</strong> - Sprint/Dive</p>
+            <p><strong>Mouse</strong> - Look | <strong>Left Click</strong> - Break | <strong>Right Click</strong> - Place</p>
+            <p><strong>1-8</strong> or <strong>Scroll</strong> - Select Block | <strong>G</strong> - Glock 🔫 | <strong>H</strong> - Enter Car 🚗</p>
+            <p style="color:#ff88cc;">🏊 <strong>You can swim in water!</strong> NPCs swim too! 🌊</p>
+            <p style="margin-top:12px; color:#ff6666;">⚠️ <strong>Watch out for exploding cats!</strong> 🐱💥</p>
+            <p style="color:#ffaa33;">🤪 <strong>Beware of crackheads - they'll mug you!</strong> 💀</p>
+        </div>
+    </div>
+
+    <!-- Death Screen -->
+    <div id="death-screen" style="display:none;">
+        <h1>☠️ You Died!</h1>
+        <p>A cat got you...</p>
+        <button id="respawn-btn" onclick="window.gamePlayer && window.gamePlayer.respawn()">Respawn</button>
+    </div>
+
+    <!-- Damage Flash Overlay -->
+    <div id="damage-flash"></div>
+
+    <!-- High Effect Overlay -->
+    <div id="high-overlay"></div>
+
+    <!-- Underwater Overlay -->
+    <div id="underwater-overlay"></div>
+
+    <!-- Car Prompt -->
+    <div id="car-prompt" style="display:none;">Press <strong>H</strong> to enter the Challenger 🚗</div>
+
+    <!-- Driving HUD -->
+    <div id="driving-hud" style="display:none;">
+        <div id="speed-display">0 mph</div>
+        <div id="driving-controls">WASD - Drive | Space - Brake | H - Exit</div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" style="display:none;">
+        <div id="crosshair">+</div>
+        <div id="health-bar">
+            <div id="health-bar-inner"></div>
+            <span id="health-text">20/20</span>
+        </div>
+        <div id="hotbar">
+            <div class="hotbar-slot selected" data-slot="0"><canvas width="32" height="32"></canvas><span>1</span></div>
+            <div class="hotbar-slot" data-slot="1"><canvas width="32" height="32"></canvas><span>2</span></div>
+            <div class="hotbar-slot" data-slot="2"><canvas width="32" height="32"></canvas><span>3</span></div>
+            <div class="hotbar-slot" data-slot="3"><canvas width="32" height="32"></canvas><span>4</span></div>
+            <div class="hotbar-slot" data-slot="4"><canvas width="32" height="32"></canvas><span>5</span></div>
+            <div class="hotbar-slot" data-slot="5"><canvas width="32" height="32"></canvas><span>6</span></div>
+            <div class="hotbar-slot" data-slot="6"><canvas width="32" height="32"></canvas><span>7</span></div>
+            <div class="hotbar-slot" data-slot="7"><canvas width="32" height="32"></canvas><span>8</span></div>
+        </div>
+        <div id="debug-info"></div>
+    </div>
+
+    <!-- Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Game Scripts -->
+    <script src="js/simplex-noise.js"></script>
+    <script src="js/block.js"></script>
+    <script src="js/world.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/input.js"></script>
+    <script src="js/cat.js"></script>
+    <script src="js/bongman.js"></script>
+    <script src="js/stripper.js"></script>
+    <script src="js/crackhead.js"></script>
+    <script src="js/car.js"></script>
+    <script src="js/glock.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

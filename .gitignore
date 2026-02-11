@@ -1,0 +1,10 @@
+# Ignore everything by default
+*
+
+# Allow game files
+!.gitignore
+!index.html
+!css/
+!css/**
+!js/
+!js/**

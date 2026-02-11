@@ -1,0 +1,390 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    overflow: hidden;
+    background: #000;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    cursor: none;
+}
+
+canvas {
+    display: block;
+}
+
+/* Start Screen */
+#start-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(180deg, #FFB0C8 0%, #e06090 40%, #c04080 40.5%, #901050 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    cursor: pointer;
+    color: white;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+}
+
+#start-screen h1 {
+    font-size: 72px;
+    margin-bottom: 20px;
+    letter-spacing: 4px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+#start-screen > p {
+    font-size: 24px;
+    animation: blink 1.5s ease-in-out infinite;
+}
+
+#start-screen .controls-info {
+    margin-top: 40px;
+    background: rgba(0,0,0,0.4);
+    padding: 20px 30px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+#start-screen .controls-info p {
+    margin: 8px 0;
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* HUD */
+#hud {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 100;
+}
+
+/* Crosshair */
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 30px;
+    font-weight: 100;
+    text-shadow: 0 0 2px rgba(0,0,0,0.8);
+    opacity: 0.8;
+    line-height: 1;
+}
+
+/* Hotbar */
+#hotbar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 2px;
+    background: rgba(0,0,0,0.4);
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.hotbar-slot {
+    width: 52px;
+    height: 52px;
+    background: rgba(100,100,100,0.5);
+    border: 2px solid rgba(50,50,50,0.8);
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.hotbar-slot.selected {
+    border-color: #fff;
+    background: rgba(200,200,200,0.4);
+    box-shadow: 0 0 8px rgba(255,255,255,0.3);
+}
+
+.hotbar-slot canvas {
+    width: 36px;
+    height: 36px;
+    image-rendering: pixelated;
+}
+
+.hotbar-slot span {
+    position: absolute;
+    bottom: 1px;
+    right: 3px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.6);
+    font-weight: bold;
+}
+
+/* Death Screen */
+#death-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(120, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 500;
+    color: white;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+    cursor: pointer;
+}
+
+#death-screen h1 {
+    font-size: 64px;
+    margin-bottom: 20px;
+    color: #ff4444;
+}
+
+#death-screen p {
+    font-size: 20px;
+    margin-bottom: 30px;
+    opacity: 0.8;
+}
+
+#death-screen button {
+    padding: 15px 40px;
+    font-size: 20px;
+    background: #cc3333;
+    color: white;
+    border: 2px solid #ff6666;
+    border-radius: 8px;
+    cursor: pointer;
+    pointer-events: all;
+    transition: background 0.2s;
+}
+
+#death-screen button:hover {
+    background: #ee4444;
+}
+
+/* Damage Flash */
+#damage-flash {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 0, 0, 0);
+    pointer-events: none;
+    z-index: 200;
+    transition: background 0.1s;
+}
+
+#damage-flash.active {
+    background: rgba(255, 0, 0, 0.4);
+}
+
+/* Health Bar */
+#health-bar {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 200px;
+    height: 20px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid rgba(100, 0, 0, 0.8);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+#health-bar-inner {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(180deg, #ff4444, #cc0000);
+    transition: width 0.3s;
+}
+
+#health-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 11px;
+    font-weight: bold;
+    text-shadow: 1px 1px 1px rgba(0,0,0,0.8);
+}
+
+/* High Effect Overlay */
+#high-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 150;
+    opacity: 0;
+    background: radial-gradient(ellipse at center, 
+        rgba(0, 180, 0, 0.0) 20%, 
+        rgba(0, 120, 0, 0.3) 60%, 
+        rgba(0, 80, 0, 0.6) 100%);
+    mix-blend-mode: multiply;
+    transition: opacity 0.5s;
+}
+
+#high-overlay.active {
+    opacity: 1;
+}
+
+/* Underwater Overlay */
+#underwater-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 145;
+    opacity: 0;
+    background: radial-gradient(ellipse at center,
+        rgba(224, 96, 160, 0.15) 0%,
+        rgba(200, 60, 130, 0.35) 40%,
+        rgba(160, 40, 100, 0.55) 80%,
+        rgba(120, 20, 70, 0.7) 100%);
+    transition: opacity 0.3s;
+}
+
+#underwater-overlay.active {
+    opacity: 1;
+    animation: underwaterWave 3s ease-in-out infinite;
+}
+
+@keyframes underwaterWave {
+    0%, 100% { 
+        background-size: 100% 100%;
+        filter: brightness(1.0);
+    }
+    25% {
+        filter: brightness(0.92);
+    }
+    50% { 
+        background-size: 105% 105%;
+        filter: brightness(1.05);
+    }
+    75% {
+        filter: brightness(0.95);
+    }
+}
+
+/* Swimming indicator */
+#swim-indicator {
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 180, 220, 0.9);
+    font-size: 14px;
+    font-family: monospace;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+}
+
+#swim-indicator.active {
+    opacity: 1;
+}
+
+/* Debug Info */
+#debug-info {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    font-size: 12px;
+    font-family: monospace;
+    text-shadow: 1px 1px 1px rgba(0,0,0,0.8);
+    line-height: 1.6;
+}
+
+/* Car Prompt */
+#car-prompt {
+    position: fixed;
+    bottom: 140px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(139, 0, 139, 0.85);
+    color: #FFD700;
+    font-size: 18px;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    padding: 12px 28px;
+    border-radius: 8px;
+    border: 2px solid #FFD700;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+    z-index: 300;
+    pointer-events: none;
+    animation: carPromptPulse 1.5s ease-in-out infinite;
+    white-space: nowrap;
+}
+
+#car-prompt strong {
+    color: #fff;
+    font-size: 22px;
+    text-shadow: 0 0 8px rgba(255,215,0,0.8);
+}
+
+@keyframes carPromptPulse {
+    0%, 100% { opacity: 1; transform: translateX(-50%) scale(1); }
+    50% { opacity: 0.85; transform: translateX(-50%) scale(1.03); }
+}
+
+/* Driving HUD */
+#driving-hud {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 300;
+    pointer-events: none;
+    text-align: center;
+}
+
+#speed-display {
+    font-size: 36px;
+    font-weight: bold;
+    color: #FFD700;
+    font-family: 'Courier New', monospace;
+    text-shadow: 0 0 10px rgba(255,0,255,0.6), 2px 2px 4px rgba(0,0,0,0.8);
+    margin-bottom: 8px;
+}
+
+#driving-controls {
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    font-family: 'Segoe UI', Arial, sans-serif;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    background: rgba(0,0,0,0.4);
+    padding: 6px 16px;
+    border-radius: 4px;
+}
