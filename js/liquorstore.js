@@ -42,9 +42,9 @@ class LiquorStore {
 
         // Clear a large area around the store (in local coords):
         // Local X: -9 to +9 (building width + margin)
-        // Local Z: -7 to +17 (building depth + parking lot + margin)
+        // Local Z: -7 to +20 (building depth + parking lot extending to road)
         for (let lx = -9; lx <= 9; lx++) {
-            for (let lz = -7; lz <= 17; lz++) {
+            for (let lz = -7; lz <= 20; lz++) {
                 // Rotate local coords to world coords
                 const bx = wx + Math.round(lx * cosR + lz * sinR);
                 const bz = wz + Math.round(-lx * sinR + lz * cosR);
@@ -64,7 +64,7 @@ class LiquorStore {
 
                 // Set the surface block based on local position
                 const inBuilding = (lx >= -5 && lx <= 5 && lz >= -4 && lz <= 4);
-                const inParkingLot = (lz > 5 && lz <= 16);
+                const inParkingLot = (lz > 5 && lz <= 20);
 
                 if (inParkingLot) {
                     this.world.setBlock(bx, groundY, bz, BlockType.ROAD_ASPHALT);
@@ -79,7 +79,7 @@ class LiquorStore {
         // Parking lot visual elements (Three.js meshes added to the group)
         // The parking lot is in front of the building (+Z direction)
         const lotWidth = 14;
-        const lotDepth = 10;
+        const lotDepth = 15; // Extended to reach the road
         const lotCenterZ = this.depth / 2 + lotDepth / 2 + 1; // In front of building
 
         // === ASPHALT SURFACE (dark gray plane) ===
