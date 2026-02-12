@@ -125,6 +125,7 @@
 
         // Wire up cop spawner references for wanted-level NPC scaling
         crackheadSpawner.copSpawner = copSpawner;
+        crackheadSpawner.stripperSpawner = stripperSpawner;
         stripperSpawner.copSpawner = copSpawner;
 
         // Spawn crypto liquor store system

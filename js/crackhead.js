@@ -550,26 +550,61 @@ class CrackheadSpawner {
         this.spawnCooldown = 0;
         this.spawnInterval = 6;
         this.copSpawner = null; // Set by main.js for wanted-level scaling
+        this.stripperSpawner = null; // Set by main.js for stripper-count scaling
+        this.carRef = null; // Set by main.js - reference to the car
+    }
+
+    // Count how many strippers are hired/collected/in-car (the player's "stable")
+    getStripperPower() {
+        if (!this.stripperSpawner) return 0;
+        let count = 0;
+        for (const s of this.stripperSpawner.strippers) {
+            if (s.alive && (s.hired || s.collected || s.inCar)) count++;
+        }
+        return count;
     }
 
     getEffectiveMax() {
-        // More crackheads spawn at higher wanted levels
+        // Base: wanted level scaling
         const wanted = this.copSpawner ? this.copSpawner.getWantedLevel() : 0;
-        if (wanted <= 0) return this.maxCrackheads;       // 10
-        if (wanted === 1) return this.maxCrackheads + 2;   // 12
-        if (wanted === 2) return this.maxCrackheads + 4;   // 14
-        if (wanted === 3) return this.maxCrackheads + 6;   // 16
-        if (wanted === 4) return this.maxCrackheads + 8;   // 18
-        return this.maxCrackheads + 10;                     // 20 at 5 stars
+        let base = this.maxCrackheads; // 10
+        if (wanted >= 1) base += 2;
+        if (wanted >= 2) base += 2;
+        if (wanted >= 3) base += 2;
+        if (wanted >= 4) base += 2;
+        if (wanted >= 5) base += 2;
+
+        // Stripper power scaling: more prostitutes = WAY more crackheads (hordes!)
+        // 0 strippers = +0, 5 = +5, 10 = +15, 15 = +30
+        const strippers = this.getStripperPower();
+        const stripperBonus = Math.floor(strippers * strippers * 0.13); // quadratic scaling
+        base += stripperBonus;
+
+        // Hard cap at 50 to prevent performance death
+        return Math.min(50, base);
     }
 
     getEffectiveInterval() {
-        // Faster spawning at higher wanted levels
+        // Base: wanted level scaling
         const wanted = this.copSpawner ? this.copSpawner.getWantedLevel() : 0;
-        if (wanted <= 0) return this.spawnInterval;         // 6s
-        if (wanted <= 2) return this.spawnInterval * 0.7;   // 4.2s
-        if (wanted <= 4) return this.spawnInterval * 0.5;   // 3s
-        return this.spawnInterval * 0.35;                    // 2.1s at 5 stars
+        let interval = this.spawnInterval; // 6s
+        if (wanted >= 1) interval *= 0.85;
+        if (wanted >= 3) interval *= 0.75;
+        if (wanted >= 5) interval *= 0.7;
+
+        // Stripper power scaling: more strippers = much faster spawning
+        // At 15 strippers, spawn every ~0.5 seconds (HORDE MODE)
+        const strippers = this.getStripperPower();
+        if (strippers >= 1) interval *= 0.85;
+        if (strippers >= 3) interval *= 0.75;
+        if (strippers >= 5) interval *= 0.7;
+        if (strippers >= 8) interval *= 0.6;
+        if (strippers >= 10) interval *= 0.5;
+        if (strippers >= 13) interval *= 0.5;
+        if (strippers >= 15) interval *= 0.4;
+
+        // Floor at 0.4 seconds
+        return Math.max(0.4, interval);
     }
 
     update(dt, playerPos) {
@@ -578,8 +613,14 @@ class CrackheadSpawner {
         const effectiveMax = this.getEffectiveMax();
         const effectiveInterval = this.getEffectiveInterval();
 
+        // Spawn multiple crackheads per tick when in horde mode (lots of strippers)
+        const strippers = this.getStripperPower();
+        const spawnsPerTick = strippers >= 10 ? 3 : (strippers >= 5 ? 2 : 1);
+
         if (this.spawnCooldown <= 0 && this.crackheads.length < effectiveMax) {
-            this.trySpawn(playerPos);
+            for (let s = 0; s < spawnsPerTick && this.crackheads.length < effectiveMax; s++) {
+                this.trySpawn(playerPos);
+            }
             this.spawnCooldown = effectiveInterval;
         }
 
