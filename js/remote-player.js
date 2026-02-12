@@ -61,7 +61,7 @@ class RemotePlayerRenderer {
             shooting: false,
             shootTime: 0,
             walkPhase: 0,
-            lastMoveTime: 0,
+            lastMoveTime: Date.now(),
             visible: false
         };
     }

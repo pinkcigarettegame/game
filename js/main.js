@@ -1216,7 +1216,7 @@
 
     function playBrokeSound() {
         try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const ctx = getAudioCtx();
             const t = ctx.currentTime;
 
             // Sad trombone / buzzer - descending tone
@@ -1508,7 +1508,7 @@
 
     function playCarImpactSound(hitCount) {
         try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const ctx = getAudioCtx();
             const t = ctx.currentTime;
 
             // Heavy thud/crunch impact
