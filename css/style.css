@@ -827,3 +827,22 @@ canvas {
 #shop-menu .shop-footer strong {
     color: #00ff88;
 }
+
+/* ==================== MINIMAP ==================== */
+#minimap-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 350;
+    pointer-events: none;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid rgba(68, 255, 255, 0.6);
+    box-shadow: 0 0 12px rgba(68, 255, 255, 0.3), 0 0 30px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, 0.7);
+}
+
+#minimap {
+    display: block;
+    border-radius: 50%;
+}

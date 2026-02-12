@@ -159,6 +159,9 @@
         // === INITIALIZE MULTIPLAYER ===
         initMultiplayer();
 
+        // === INITIALIZE MINIMAP ===
+        initMinimap();
+
         ui.show();
         
         // Show multiplayer HUD
@@ -238,6 +241,173 @@
         }
     }
     
+    // === MINIMAP SYSTEM ===
+    let minimapCanvas = null;
+    let minimapCtx = null;
+    const MINIMAP_SIZE = 160;
+    const MINIMAP_SCALE = 1.2; // pixels per block (so ~67 block radius visible)
+    const MINIMAP_CENTER = MINIMAP_SIZE / 2;
+
+    function initMinimap() {
+        minimapCanvas = document.getElementById('minimap');
+        if (!minimapCanvas) return;
+        minimapCtx = minimapCanvas.getContext('2d');
+        const container = document.getElementById('minimap-container');
+        if (container) container.style.display = 'block';
+    }
+
+    function updateMinimap() {
+        if (!minimapCtx || !player || !mp) return;
+
+        const ctx = minimapCtx;
+        const cx = MINIMAP_CENTER;
+        const cy = MINIMAP_CENTER;
+        const r = MINIMAP_SIZE / 2;
+
+        // Clear with dark background
+        ctx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+
+        // Clip to circle
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+        ctx.clip();
+
+        // Dark background
+        ctx.fillStyle = 'rgba(10, 8, 20, 0.85)';
+        ctx.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+
+        // Get player facing angle (yaw) for rotating the map
+        const playerYaw = camera.rotation.y;
+
+        // Draw faint grid lines (roads every 128 blocks)
+        const ROAD_SPACING = 128;
+        ctx.strokeStyle = 'rgba(60, 50, 80, 0.4)';
+        ctx.lineWidth = 1;
+        const viewRange = r / MINIMAP_SCALE;
+        const px = player.position.x;
+        const pz = player.position.z;
+
+        // Draw road grid lines
+        ctx.strokeStyle = 'rgba(100, 90, 120, 0.3)';
+        ctx.lineWidth = 2;
+        const minRoadX = Math.floor((px - viewRange) / ROAD_SPACING) * ROAD_SPACING;
+        const maxRoadX = Math.ceil((px + viewRange) / ROAD_SPACING) * ROAD_SPACING;
+        const minRoadZ = Math.floor((pz - viewRange) / ROAD_SPACING) * ROAD_SPACING;
+        const maxRoadZ = Math.ceil((pz + viewRange) / ROAD_SPACING) * ROAD_SPACING;
+
+        for (let rx = minRoadX; rx <= maxRoadX; rx += ROAD_SPACING) {
+            drawMinimapLine(ctx, cx, cy, rx - px, -viewRange, rx - px, viewRange, playerYaw, MINIMAP_SCALE);
+        }
+        for (let rz = minRoadZ; rz <= maxRoadZ; rz += ROAD_SPACING) {
+            drawMinimapLine(ctx, cx, cy, -viewRange, rz - pz, viewRange, rz - pz, playerYaw, MINIMAP_SCALE);
+        }
+
+        // Draw remote players
+        const remotePlayers = mp.getRemotePlayers();
+        for (const pid in remotePlayers) {
+            const rp = remotePlayers[pid];
+            if (!rp || !rp.position) continue;
+
+            // Relative position
+            const dx = rp.position.x - px;
+            const dz = rp.position.z - pz;
+
+            // Rotate by player yaw (so forward is always up)
+            const cos = Math.cos(playerYaw);
+            const sin = Math.sin(playerYaw);
+            const sx = (dx * cos - dz * sin) * MINIMAP_SCALE + cx;
+            const sy = (dx * sin + dz * cos) * MINIMAP_SCALE + cy;
+
+            // Check if within minimap circle
+            const distFromCenter = Math.sqrt((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy));
+            if (distFromCenter > r - 6) {
+                // Draw at edge as an arrow indicator
+                const angle = Math.atan2(sy - cy, sx - cx);
+                const edgeX = cx + Math.cos(angle) * (r - 8);
+                const edgeY = cy + Math.sin(angle) * (r - 8);
+
+                // Small arrow pointing outward
+                ctx.fillStyle = '#44ffff';
+                ctx.globalAlpha = 0.6;
+                ctx.beginPath();
+                ctx.arc(edgeX, edgeY, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            } else {
+                // Draw player dot
+                ctx.fillStyle = rp.driving ? '#ffaa00' : '#44ffff';
+                ctx.shadowColor = rp.driving ? '#ffaa00' : '#44ffff';
+                ctx.shadowBlur = 6;
+                ctx.beginPath();
+                ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // Draw name label
+                if (rp.name) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 8px Courier New';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(rp.name, sx, sy - 7);
+                }
+            }
+        }
+
+        // Draw local player (center, white triangle pointing up = forward)
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 6);
+        ctx.lineTo(cx - 4, cy + 4);
+        ctx.lineTo(cx + 4, cy + 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Draw compass directions
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = 'bold 9px Courier New';
+        ctx.textAlign = 'center';
+        // N is at angle = playerYaw (rotated)
+        const compassR = r - 12;
+        const dirs = [
+            { label: 'N', angle: 0 },
+            { label: 'E', angle: Math.PI / 2 },
+            { label: 'S', angle: Math.PI },
+            { label: 'W', angle: -Math.PI / 2 }
+        ];
+        for (const d of dirs) {
+            const a = d.angle + playerYaw;
+            const lx = cx + Math.sin(a) * compassR;
+            const ly = cy - Math.cos(a) * compassR;
+            ctx.fillStyle = d.label === 'N' ? 'rgba(255, 100, 100, 0.7)' : 'rgba(255, 255, 255, 0.35)';
+            ctx.fillText(d.label, lx, ly + 3);
+        }
+
+        // Draw circular border ring
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(68, 255, 255, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r - 2, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    function drawMinimapLine(ctx, cx, cy, x1, z1, x2, z2, yaw, scale) {
+        const cos = Math.cos(yaw);
+        const sin = Math.sin(yaw);
+        const sx1 = (x1 * cos - z1 * sin) * scale + cx;
+        const sy1 = (x1 * sin + z1 * cos) * scale + cy;
+        const sx2 = (x2 * cos - z2 * sin) * scale + cx;
+        const sy2 = (x2 * sin + z2 * cos) * scale + cy;
+        ctx.beginPath();
+        ctx.moveTo(sx1, sy1);
+        ctx.lineTo(sx2, sy2);
+        ctx.stroke();
+    }
+
     function showMPMessage(text, color) {
         const container = document.getElementById('mp-messages');
         if (!container) return;
@@ -514,6 +684,9 @@
         if (remoteRenderer) {
             remoteRenderer.update(dt, camera.position);
         }
+
+        // Update minimap
+        updateMinimap();
 
         // Render
         renderer.render(scene, camera);
