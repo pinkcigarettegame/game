@@ -207,6 +207,10 @@
 
         if (drivingMode) {
             // === DRIVING MODE ===
+            // Tick down player timers even while driving (damage flash, invulnerability)
+            player.damageFlash = Math.max(0, player.damageFlash - dt);
+            player.invulnerable = Math.max(0, player.invulnerable - dt);
+            
             // Update car physics
             challenger.updateDriving(dt, input);
             
@@ -569,6 +573,11 @@
         if (hud) hud.style.display = 'none';
         if (drivingHud) drivingHud.style.display = 'block';
         if (carPrompt) carPrompt.style.display = 'none';
+        
+        // Clear any active damage flash when entering car
+        player.damageFlash = 0;
+        const dmgFlash = document.getElementById('damage-flash');
+        if (dmgFlash) dmgFlash.classList.remove('active');
         
         // Hide glock if equipped
         if (glock && glock.equipped) {
