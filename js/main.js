@@ -123,13 +123,27 @@
         // Give player a reference to stripper spawner for money spread collection display
         player.stripperSpawnerRef = stripperSpawner;
 
+        // Wire up cop spawner references for wanted-level NPC scaling
+        crackheadSpawner.copSpawner = copSpawner;
+        stripperSpawner.copSpawner = copSpawner;
+
         // Spawn crypto liquor store system
         liquorStoreSpawner = new LiquorStoreSpawner(world, scene);
         liquorStoreSpawner.player = player;
         liquorStoreSpawner.glock = glock;
         liquorStoreSpawner.stripperSpawner = stripperSpawner;
 
-        // Spawn the pimp Dodge Challenger on the nearest road
+        // Force-spawn the first liquor store near the player and teleport player there
+        const firstStore = liquorStoreSpawner.forceSpawnAtRoad(player.position.x, player.position.z);
+        if (firstStore) {
+            const parkPos = LiquorStoreSpawner.getParkingPosition(firstStore);
+            player.position.set(parkPos.x, parkPos.y, parkPos.z);
+            player.velocity.set(0, 0, 0);
+            world.update(player.position.x, player.position.z);
+            player.updateCamera();
+        }
+
+        // Spawn the pimp Dodge Challenger in the parking lot
         spawnChallenger();
 
         ui.show();

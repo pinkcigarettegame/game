@@ -549,14 +549,38 @@ class CrackheadSpawner {
         this.maxCrackheads = 10;
         this.spawnCooldown = 0;
         this.spawnInterval = 6;
+        this.copSpawner = null; // Set by main.js for wanted-level scaling
+    }
+
+    getEffectiveMax() {
+        // More crackheads spawn at higher wanted levels
+        const wanted = this.copSpawner ? this.copSpawner.getWantedLevel() : 0;
+        if (wanted <= 0) return this.maxCrackheads;       // 10
+        if (wanted === 1) return this.maxCrackheads + 2;   // 12
+        if (wanted === 2) return this.maxCrackheads + 4;   // 14
+        if (wanted === 3) return this.maxCrackheads + 6;   // 16
+        if (wanted === 4) return this.maxCrackheads + 8;   // 18
+        return this.maxCrackheads + 10;                     // 20 at 5 stars
+    }
+
+    getEffectiveInterval() {
+        // Faster spawning at higher wanted levels
+        const wanted = this.copSpawner ? this.copSpawner.getWantedLevel() : 0;
+        if (wanted <= 0) return this.spawnInterval;         // 6s
+        if (wanted <= 2) return this.spawnInterval * 0.7;   // 4.2s
+        if (wanted <= 4) return this.spawnInterval * 0.5;   // 3s
+        return this.spawnInterval * 0.35;                    // 2.1s at 5 stars
     }
 
     update(dt, playerPos) {
         this.spawnCooldown -= dt;
 
-        if (this.spawnCooldown <= 0 && this.crackheads.length < this.maxCrackheads) {
+        const effectiveMax = this.getEffectiveMax();
+        const effectiveInterval = this.getEffectiveInterval();
+
+        if (this.spawnCooldown <= 0 && this.crackheads.length < effectiveMax) {
             this.trySpawn(playerPos);
-            this.spawnCooldown = this.spawnInterval;
+            this.spawnCooldown = effectiveInterval;
         }
 
         for (var i = this.crackheads.length - 1; i >= 0; i--) {

@@ -792,13 +792,37 @@ class StripperSpawner {
         this.maxStrippers = 8;
         this.spawnCooldown = 0;
         this.spawnInterval = 5;
+        this.copSpawner = null; // Set by main.js for wanted-level scaling
+    }
+
+    getEffectiveMax() {
+        // More strippers spawn at higher wanted levels (more chaos = more NPCs)
+        const wanted = this.copSpawner ? this.copSpawner.getWantedLevel() : 0;
+        if (wanted <= 0) return this.maxStrippers;        // 8
+        if (wanted === 1) return this.maxStrippers + 2;    // 10
+        if (wanted === 2) return this.maxStrippers + 3;    // 11
+        if (wanted === 3) return this.maxStrippers + 4;    // 12
+        if (wanted === 4) return this.maxStrippers + 5;    // 13
+        return this.maxStrippers + 6;                       // 14 at 5 stars
+    }
+
+    getEffectiveInterval() {
+        // Faster spawning at higher wanted levels
+        const wanted = this.copSpawner ? this.copSpawner.getWantedLevel() : 0;
+        if (wanted <= 0) return this.spawnInterval;         // 5s
+        if (wanted <= 2) return this.spawnInterval * 0.7;   // 3.5s
+        if (wanted <= 4) return this.spawnInterval * 0.5;   // 2.5s
+        return this.spawnInterval * 0.35;                    // 1.75s at 5 stars
     }
 
     update(dt, playerPos) {
         this.spawnCooldown -= dt;
-        if (this.spawnCooldown <= 0 && this.strippers.length < this.maxStrippers) {
+        const effectiveMax = this.getEffectiveMax();
+        const effectiveInterval = this.getEffectiveInterval();
+
+        if (this.spawnCooldown <= 0 && this.strippers.length < effectiveMax) {
             this.trySpawn(playerPos);
-            this.spawnCooldown = this.spawnInterval;
+            this.spawnCooldown = effectiveInterval;
         }
 
         for (let i = this.strippers.length - 1; i >= 0; i--) {

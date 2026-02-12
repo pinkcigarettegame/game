@@ -962,7 +962,10 @@ class LiquorStoreSpawner {
         // Road half-width is 5 blocks (total 11 blocks wide)
         const ROAD_SPACING = 128;
         const ROAD_HALF_WIDTH = 5;
-        const BUILDING_SETBACK = 14; // Distance from road center to building center (road edge + parking lot + half building)
+        // Building center distance from road center:
+        // road half-width (5) + parking lot depth (~10) = 15
+        // This places the parking lot edge flush with the road
+        const BUILDING_SETBACK = 15;
 
         // Find nearest road grid lines
         const nearestXRoad = Math.round(playerPos.x / ROAD_SPACING) * ROAD_SPACING; // Z-aligned road at this X
@@ -1091,6 +1094,56 @@ class LiquorStoreSpawner {
             }
         }
         return nearest;
+    }
+
+    // Force spawn a store at a specific road location (used for initial spawn)
+    forceSpawnAtRoad(nearX, nearZ) {
+        const ROAD_SPACING = 128;
+        const BUILDING_SETBACK = 15;
+
+        // Find nearest road to the given position
+        const nearestXRoad = Math.round(nearX / ROAD_SPACING) * ROAD_SPACING;
+        const nearestZRoad = Math.round(nearZ / ROAD_SPACING) * ROAD_SPACING;
+
+        // Determine which road is closer
+        const distToXRoad = Math.abs(nearX - nearestXRoad);
+        const distToZRoad = Math.abs(nearZ - nearestZRoad);
+
+        let storeX, storeZ, storeRot;
+
+        if (distToXRoad <= distToZRoad) {
+            // Closer to a Z-aligned road (runs along Z at x=nearestXRoad)
+            // Place store on the +X side
+            storeX = nearestXRoad + BUILDING_SETBACK;
+            storeZ = nearZ;
+            storeRot = -Math.PI / 2; // Front faces -X toward road
+        } else {
+            // Closer to an X-aligned road (runs along X at z=nearestZRoad)
+            // Place store on the -Z side (front faces +Z toward road)
+            storeX = nearX;
+            storeZ = nearestZRoad - BUILDING_SETBACK;
+            storeRot = 0; // Front faces +Z toward road
+        }
+
+        // Make sure terrain is loaded
+        this.world.update(storeX, storeZ);
+
+        const sy = this.world.getSpawnHeight(storeX, storeZ);
+        const store = new LiquorStore(this.scene, this.world, storeX, sy, storeZ, storeRot);
+        this.stores.push(store);
+        return store;
+    }
+
+    // Get the parking lot world position for a store (for spawning player/car there)
+    static getParkingPosition(store) {
+        const parkingDist = 10; // Local Z distance to parking center
+        const cosR = Math.cos(store.rotation);
+        const sinR = Math.sin(store.rotation);
+        return {
+            x: store.position.x + parkingDist * sinR,
+            y: store.position.y + 2,
+            z: store.position.z + parkingDist * cosR
+        };
     }
 
     getCount() {
