@@ -12,6 +12,14 @@ class Glock {
         this.recoilTimer = 0;
         this.muzzleFlashTimer = 0;
 
+        // Magazine / Reload system
+        this.magazineSize = 17;
+        this.currentAmmo = 17;
+        this.reloading = false;
+        this.reloadTime = 1.5; // seconds
+        this.reloadTimer = 0;
+        this.slideBackTimer = 0; // visual slide-back on last round
+
         this.audioCtx = null;
         this.lastShotTime = 0;
 
@@ -35,17 +43,24 @@ class Glock {
         this.money = 0;
         this.dollarBills = []; // floating dollar bill DOM elements
 
+        // Combat coordination - armed strippers react to what player shoots
+        this.lastTargetType = null; // 'crackhead', 'cop', or null
+        this.lastTargetTime = 0; // timestamp of last hostile shot
+        this.combatTimeout = 5; // seconds before strippers stop fighting
+
         // Targets registry
         this.catSpawner = null;
         this.bongManSpawner = null;
         this.stripperSpawner = null;
+        this.copSpawner = null;
     }
 
-    setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner) {
+    setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner) {
         this.catSpawner = catSpawner;
         this.bongManSpawner = bongManSpawner;
         this.stripperSpawner = stripperSpawner;
         this.crackheadSpawner = crackheadSpawner;
+        this.copSpawner = copSpawner;
     }
 
     createGunModel() {
@@ -218,6 +233,17 @@ class Glock {
 
     shoot() {
         if (this.fireCooldown > 0) return;
+        if (this.reloading) return;
+
+        // Check ammo
+        if (this.currentAmmo <= 0) {
+            // Click! Empty - auto reload
+            this.playEmptyClick();
+            this.startReload();
+            return;
+        }
+
+        this.currentAmmo--;
         this.fireCooldown = this.fireRate;
 
         // Play sound
@@ -226,14 +252,26 @@ class Glock {
         // Muzzle flash
         this.muzzleFlash.visible = true;
         this.muzzleFlashTimer = 0.05;
-        // Randomize flash rotation
         this.muzzleFlash.rotation.z = Math.random() * Math.PI * 2;
 
         // Recoil
         this.recoilTimer = 0.1;
 
+        // Shell ejection!
+        this.ejectShell();
+
         // Bullet tracer
         this.createBulletTracer();
+
+        // Update ammo display
+        this.updateAmmoDisplay();
+
+        // Auto-reload on last round
+        if (this.currentAmmo <= 0) {
+            this.slideBackTimer = 0.3;
+        }
+
+        // Wanted level is now only added when hitting certain NPCs (not crackheads or cats)
 
         // Raycast from camera center
         const origin = this.camera.getWorldPosition(new THREE.Vector3());
@@ -270,6 +308,8 @@ class Glock {
                     bm.health -= this.damage;
                     this.createHitEffect(hit);
                     this.createBloodEffect(hit);
+                    // Shooting bongmen attracts police
+                    if (this.copSpawner) this.copSpawner.addWanted(0.1);
                     if (bm.health <= 0) {
                         bm.alive = false;
                         bm.dispose();
@@ -299,6 +339,8 @@ class Glock {
                     s.health -= this.damage;
                     this.createHitEffect(hit);
                     this.createBloodEffect(hit);
+                    // Shooting strippers attracts police
+                    if (this.copSpawner) this.copSpawner.addWanted(0.1);
                     // Dollar bill every time a stripper is shot!
                     this.spawnDollarBill();
                     this.money++;
@@ -334,6 +376,9 @@ class Glock {
                 if (!ch.alive) continue;
                 const hit = this.checkRayHit(origin, direction, ch.position, 0.4, 1.5);
                 if (hit) {
+                    // Signal armed strippers to fight crackheads
+                    this.lastTargetType = 'crackhead';
+                    this.lastTargetTime = Date.now() / 1000;
                     ch.health -= this.damage;
                     this.createHitEffect(hit);
                     this.createBloodEffect(hit);
@@ -354,6 +399,41 @@ class Glock {
                         ch.fleeDir.normalize();
                         ch.fleeTimer = 4;
                         ch.playMumble();
+                    }
+                    hitSomething = true;
+                    break;
+                }
+            }
+        }
+
+        // Check cops - they drop BIG money!
+        if (!hitSomething && this.copSpawner && this.copSpawner.cops) {
+            for (let i = this.copSpawner.cops.length - 1; i >= 0; i--) {
+                const cop = this.copSpawner.cops[i];
+                if (!cop.alive) continue;
+                const hit = this.checkRayHit(origin, direction, cop.position, 0.4, 1.6);
+                if (hit) {
+                    // Signal armed strippers to fight cops
+                    this.lastTargetType = 'cop';
+                    this.lastTargetTime = Date.now() / 1000;
+                    cop.health -= this.damage;
+                    this.createHitEffect(hit);
+                    this.createBloodEffect(hit);
+                    if (cop.health <= 0) {
+                        cop.alive = false;
+                        // Cops drop BIG money! $20-50 per cop
+                        const copMoney = 20 + Math.floor(Math.random() * 31);
+                        for (let d = 0; d < 10; d++) {
+                            setTimeout(() => this.spawnDollarBill(), d * 60);
+                        }
+                        this.money += copMoney;
+                        // Killing a cop adds wanted stars (handled in spawner update)
+                        cop.dispose();
+                        this.copSpawner.cops.splice(i, 1);
+                        this.copSpawner.addWanted(1);
+                    } else {
+                        // Cop shouts when hit
+                        cop.playShout();
                     }
                     hitSomething = true;
                     break;
@@ -855,6 +935,277 @@ class Glock {
         requestAnimationFrame(animateBill);
     }
 
+    // === RELOAD SYSTEM ===
+    startReload() {
+        if (this.reloading || this.currentAmmo >= this.magazineSize) return;
+        this.reloading = true;
+        this.reloadTimer = this.reloadTime;
+        this.playReloadSound();
+        this.updateAmmoDisplay();
+    }
+
+    playEmptyClick() {
+        try {
+            if (!this.audioCtx) {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const ctx = this.audioCtx;
+            const t = ctx.currentTime;
+            // Dry click sound
+            const osc = ctx.createOscillator();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(1800, t);
+            osc.frequency.exponentialRampToValueAtTime(800, t + 0.02);
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(0.15, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.04);
+        } catch(e) {}
+    }
+
+    playReloadSound() {
+        try {
+            if (!this.audioCtx) {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const ctx = this.audioCtx;
+            const t = ctx.currentTime;
+
+            // Magazine release click
+            const click1 = ctx.createOscillator();
+            click1.type = 'square';
+            click1.frequency.setValueAtTime(2500, t + 0.1);
+            click1.frequency.exponentialRampToValueAtTime(1000, t + 0.13);
+            const cGain1 = ctx.createGain();
+            cGain1.gain.setValueAtTime(0.12, t + 0.1);
+            cGain1.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+            click1.connect(cGain1);
+            cGain1.connect(ctx.destination);
+            click1.start(t + 0.1);
+            click1.stop(t + 0.16);
+
+            // Magazine sliding out (noise)
+            const bufSize1 = ctx.sampleRate * 0.15;
+            const buf1 = ctx.createBuffer(1, bufSize1, ctx.sampleRate);
+            const d1 = buf1.getChannelData(0);
+            for (let i = 0; i < bufSize1; i++) d1[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.05));
+            const src1 = ctx.createBufferSource();
+            src1.buffer = buf1;
+            const g1 = ctx.createGain();
+            g1.gain.setValueAtTime(0.08, t + 0.15);
+            g1.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+            const lp1 = ctx.createBiquadFilter();
+            lp1.type = 'lowpass';
+            lp1.frequency.setValueAtTime(2000, t + 0.15);
+            src1.connect(lp1);
+            lp1.connect(g1);
+            g1.connect(ctx.destination);
+            src1.start(t + 0.15);
+
+            // Magazine insert (thunk)
+            const osc2 = ctx.createOscillator();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(200, t + 0.8);
+            osc2.frequency.exponentialRampToValueAtTime(80, t + 0.85);
+            const g2 = ctx.createGain();
+            g2.gain.setValueAtTime(0.2, t + 0.8);
+            g2.gain.exponentialRampToValueAtTime(0.01, t + 0.9);
+            osc2.connect(g2);
+            g2.connect(ctx.destination);
+            osc2.start(t + 0.8);
+            osc2.stop(t + 0.95);
+
+            // Magazine click in
+            const click2 = ctx.createOscillator();
+            click2.type = 'square';
+            click2.frequency.setValueAtTime(3000, t + 0.85);
+            click2.frequency.exponentialRampToValueAtTime(1500, t + 0.88);
+            const cGain2 = ctx.createGain();
+            cGain2.gain.setValueAtTime(0.15, t + 0.85);
+            cGain2.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+            click2.connect(cGain2);
+            cGain2.connect(ctx.destination);
+            click2.start(t + 0.85);
+            click2.stop(t + 0.92);
+
+            // Slide rack (metallic)
+            const bufSize2 = ctx.sampleRate * 0.1;
+            const buf2 = ctx.createBuffer(1, bufSize2, ctx.sampleRate);
+            const d2 = buf2.getChannelData(0);
+            for (let i = 0; i < bufSize2; i++) d2[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.025));
+            const src2 = ctx.createBufferSource();
+            src2.buffer = buf2;
+            const g3 = ctx.createGain();
+            g3.gain.setValueAtTime(0.15, t + 1.2);
+            g3.gain.exponentialRampToValueAtTime(0.01, t + 1.35);
+            const hp = ctx.createBiquadFilter();
+            hp.type = 'highpass';
+            hp.frequency.setValueAtTime(1500, t + 1.2);
+            src2.connect(hp);
+            hp.connect(g3);
+            g3.connect(ctx.destination);
+            src2.start(t + 1.2);
+
+            // Slide forward snap
+            const snap = ctx.createOscillator();
+            snap.type = 'sawtooth';
+            snap.frequency.setValueAtTime(4000, t + 1.35);
+            snap.frequency.exponentialRampToValueAtTime(2000, t + 1.38);
+            const sGain = ctx.createGain();
+            sGain.gain.setValueAtTime(0.1, t + 1.35);
+            sGain.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+            snap.connect(sGain);
+            sGain.connect(ctx.destination);
+            snap.start(t + 1.35);
+            snap.stop(t + 1.42);
+        } catch(e) {}
+    }
+
+    // === SHELL EJECTION ===
+    ejectShell() {
+        // Get gun world position and right direction
+        const gunWorldPos = new THREE.Vector3();
+        this.gunGroup.getWorldPosition(gunWorldPos);
+        
+        const camRight = new THREE.Vector3(1, 0, 0);
+        camRight.applyQuaternion(this.camera.getWorldQuaternion(new THREE.Quaternion()));
+        const camUp = new THREE.Vector3(0, 1, 0);
+        camUp.applyQuaternion(this.camera.getWorldQuaternion(new THREE.Quaternion()));
+
+        // Create brass shell casing
+        const shellGeo = new THREE.BoxGeometry(0.02, 0.02, 0.04);
+        const shellMat = new THREE.MeshBasicMaterial({ color: 0xCCA020 }); // Brass color
+        const shell = new THREE.Mesh(shellGeo, shellMat);
+        
+        // Start position near the gun ejection port (right side)
+        shell.position.copy(gunWorldPos);
+        shell.position.add(camRight.clone().multiplyScalar(0.3));
+        shell.position.add(camUp.clone().multiplyScalar(0.1));
+        
+        this.scene.add(shell);
+
+        // Shell velocity - eject to the right and up with spin
+        const vx = camRight.x * (3 + Math.random() * 2) + (Math.random() - 0.5) * 1;
+        const vy = camRight.y * 3 + camUp.y * (2 + Math.random() * 2) + 2;
+        const vz = camRight.z * (3 + Math.random() * 2) + (Math.random() - 0.5) * 1;
+        const spinX = (Math.random() - 0.5) * 20;
+        const spinY = (Math.random() - 0.5) * 20;
+        const spinZ = (Math.random() - 0.5) * 20;
+
+        let frame = 0;
+        const gravity = -15;
+        let velY = vy;
+
+        const animateShell = () => {
+            frame++;
+            const dt = 0.016;
+            shell.position.x += vx * dt;
+            velY += gravity * dt;
+            shell.position.y += velY * dt;
+            shell.position.z += vz * dt;
+            shell.rotation.x += spinX * dt;
+            shell.rotation.y += spinY * dt;
+            shell.rotation.z += spinZ * dt;
+
+            // Shell casing tink sound when it hits ground level
+            if (velY < 0 && shell.position.y < gunWorldPos.y - 1.5 && frame > 5) {
+                this.playShellTink();
+                // Bounce once
+                velY = Math.abs(velY) * 0.3;
+                if (frame > 20) {
+                    // Fade out
+                    shellMat.transparent = true;
+                    shellMat.opacity = Math.max(0, 1 - (frame - 20) / 30);
+                }
+            }
+
+            if (frame < 60) {
+                requestAnimationFrame(animateShell);
+            } else {
+                this.scene.remove(shell);
+                shellGeo.dispose();
+                shellMat.dispose();
+            }
+        };
+        requestAnimationFrame(animateShell);
+    }
+
+    playShellTink() {
+        try {
+            if (!this.audioCtx) {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const ctx = this.audioCtx;
+            const t = ctx.currentTime;
+            // Tiny metallic tink
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(4000 + Math.random() * 2000, t);
+            osc.frequency.exponentialRampToValueAtTime(2000, t + 0.03);
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(0.04, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.06);
+        } catch(e) {}
+    }
+
+    // === AMMO DISPLAY ===
+    updateAmmoDisplay() {
+        const ammoDisplay = document.getElementById('ammo-display');
+        const ammoCount = document.getElementById('ammo-count');
+        const reloadText = document.getElementById('reload-text');
+        if (!ammoDisplay || !ammoCount) return;
+
+        if (this.equipped) {
+            ammoDisplay.style.display = 'flex';
+            
+            if (this.reloading) {
+                ammoCount.style.display = 'none';
+                if (reloadText) reloadText.style.display = 'inline';
+            } else {
+                ammoCount.style.display = 'inline';
+                if (reloadText) reloadText.style.display = 'none';
+                ammoCount.textContent = `${this.currentAmmo}/${this.magazineSize}`;
+                
+                // Color based on ammo level
+                ammoCount.className = '';
+                if (this.currentAmmo <= 0) {
+                    ammoCount.classList.add('empty');
+                } else if (this.currentAmmo <= 4) {
+                    ammoCount.classList.add('low');
+                }
+            }
+        } else {
+            ammoDisplay.style.display = 'none';
+        }
+    }
+
+    // === WANTED STARS DISPLAY ===
+    updateWantedDisplay() {
+        const wantedEl = document.getElementById('wanted-stars');
+        if (!wantedEl || !this.copSpawner) return;
+
+        const level = Math.floor(this.copSpawner.wantedLevel);
+        if (level > 0) {
+            wantedEl.style.display = 'block';
+            wantedEl.classList.add('wanted');
+            let stars = '';
+            for (let i = 0; i < 5; i++) {
+                stars += i < level ? '⭐' : '☆';
+            }
+            wantedEl.textContent = stars;
+        } else {
+            wantedEl.style.display = 'none';
+            wantedEl.classList.remove('wanted');
+        }
+    }
+
     update(dt) {
         this.fireCooldown = Math.max(0, this.fireCooldown - dt);
 
@@ -866,11 +1217,61 @@ class Glock {
             }
         }
 
+        // Reload timer
+        if (this.reloading) {
+            this.reloadTimer -= dt;
+            if (this.reloadTimer <= 0) {
+                this.reloading = false;
+                this.currentAmmo = this.magazineSize;
+                this.updateAmmoDisplay();
+            }
+        }
+
+        // Slide back timer (visual on empty)
+        if (this.slideBackTimer > 0) {
+            this.slideBackTimer -= dt;
+        }
+
+        // Update wanted stars display
+        this.updateWantedDisplay();
+
+        // Update ammo display visibility
+        this.updateAmmoDisplay();
+
         // Recoil animation
-        if (this.recoilTimer > 0) {
+        if (this.reloading) {
+            // Reload animation - gun tilts down and back
+            const reloadProgress = 1 - (this.reloadTimer / this.reloadTime);
+            let tiltX = 0, posY = -0.25, posZ = -0.5;
+            
+            if (reloadProgress < 0.3) {
+                // Magazine out - tilt down
+                const p = reloadProgress / 0.3;
+                tiltX = p * 0.4;
+                posY = -0.25 - p * 0.1;
+            } else if (reloadProgress < 0.6) {
+                // Magazine in - hold tilted
+                tiltX = 0.4;
+                posY = -0.35;
+            } else if (reloadProgress < 0.85) {
+                // Slide rack - tilt back up
+                const p = (reloadProgress - 0.6) / 0.25;
+                tiltX = 0.4 * (1 - p);
+                posY = -0.35 + p * 0.1;
+                posZ = -0.5 + Math.sin(p * Math.PI) * 0.04;
+            } else {
+                // Snap forward
+                const p = (reloadProgress - 0.85) / 0.15;
+                tiltX = 0;
+                posY = -0.25;
+                posZ = -0.5 - (1 - p) * 0.03;
+            }
+            
+            this.gunGroup.position.set(0.3, posY, posZ);
+            this.gunGroup.rotation.x = -tiltX;
+        } else if (this.recoilTimer > 0) {
             this.recoilTimer -= dt;
             const recoilAmount = this.recoilTimer / 0.1;
-            // Kick back and up
             this.gunGroup.position.set(
                 0.3,
                 -0.25 + recoilAmount * 0.04,

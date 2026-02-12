@@ -10,6 +10,7 @@ class DodgeChallenger {
         
         // Driving state
         this.occupied = false;
+        this.passengers = []; // Strippers riding in the car
         this.speed = 0;           // Current speed (blocks/sec)
         this.maxSpeed = 18;       // Max forward speed
         this.maxReverse = -6;     // Max reverse speed
@@ -36,6 +37,29 @@ class DodgeChallenger {
         return this.position.distanceTo(pos);
     }
 
+    // Check if a point is inside the car's bounding box (rotated)
+    // Returns true if the NPC position is within the car's footprint
+    isPointInCarBounds(point, padding) {
+        padding = padding || 0.3;
+        // Car dimensions: ~2.4 wide (X), ~5.0 long (Z) in local space
+        const halfWidth = 1.4 + padding;  // half of car width + padding
+        const halfLength = 2.8 + padding; // half of car length + padding
+
+        // Transform point into car's local space
+        const dx = point.x - this.position.x;
+        const dz = point.z - this.position.z;
+
+        // Rotate by negative car rotation to get local coordinates
+        const cosR = Math.cos(-this.rotation);
+        const sinR = Math.sin(-this.rotation);
+        const localX = dx * cosR - dz * sinR;
+        const localZ = dx * sinR + dz * cosR;
+
+        // Check if within bounding box and roughly same height
+        const dy = Math.abs(point.y - this.position.y);
+        return Math.abs(localX) < halfWidth && Math.abs(localZ) < halfLength && dy < 2.5;
+    }
+
     // Enter the car
     enter() {
         this.occupied = true;
@@ -50,7 +74,75 @@ class DodgeChallenger {
         const exitX = this.position.x + Math.cos(this.rotation) * 2.5;
         const exitZ = this.position.z - Math.sin(this.rotation) * 2.5;
         const exitY = this.world.getSpawnHeight(exitX, exitZ);
-        return new THREE.Vector3(exitX, exitY + 1.8, exitZ);
+        
+        const exitPos = new THREE.Vector3(exitX, exitY + 1.8, exitZ);
+        
+        // Release all passenger strippers near the player's exit position
+        this.releasePassengers(exitPos);
+        
+        return exitPos;
+    }
+
+    // Add a stripper passenger to the car
+    addPassenger(stripper) {
+        stripper.inCar = true;
+        stripper.hired = true; // Mark as hired - she's been paid for
+        stripper.mesh.visible = false;
+        this.passengers.push(stripper);
+    }
+
+    // Release all passengers when exiting - they stay hired and follow the player
+    releasePassengers(exitPos) {
+        const releaseCenter = exitPos || this.position;
+        for (let i = 0; i < this.passengers.length; i++) {
+            const s = this.passengers[i];
+            if (!s.alive) continue;
+            s.inCar = false;
+            s.mesh.visible = true;
+            // Place them near the player's exit position (not randomly around the car)
+            const angle = (i / Math.max(1, this.passengers.length)) * Math.PI * 2;
+            const dist = 2 + Math.random() * 1.5;
+            s.position.x = releaseCenter.x + Math.cos(angle) * dist;
+            s.position.z = releaseCenter.z + Math.sin(angle) * dist;
+            s.position.y = this.world.getSpawnHeight(s.position.x, s.position.z) + 0.5;
+            s.mesh.position.copy(s.position);
+            // They stay hired = true, so they'll keep following the player
+        }
+        this.passengers = [];
+    }
+
+    // Upgrade a passenger with a glock - returns the upgraded stripper or null
+    upgradePassenger() {
+        for (const s of this.passengers) {
+            if (s.alive && !s.armed) {
+                s.equipGlock();
+                return s;
+            }
+        }
+        return null; // All passengers already armed or no passengers
+    }
+
+    // Get count of unarmed passengers
+    getUnarmedPassengerCount() {
+        let count = 0;
+        for (const s of this.passengers) {
+            if (s.alive && !s.armed) count++;
+        }
+        return count;
+    }
+
+    // Get count of armed passengers
+    getArmedPassengerCount() {
+        let count = 0;
+        for (const s of this.passengers) {
+            if (s.alive && s.armed) count++;
+        }
+        return count;
+    }
+
+    // Get passenger count
+    getPassengerCount() {
+        return this.passengers.length;
     }
 
     // Update car physics when being driven

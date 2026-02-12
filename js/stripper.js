@@ -19,9 +19,28 @@ class Stripper {
         this.approachDir = new THREE.Vector3(0, 0, 0);
         this.dancePhase = Math.random() * Math.PI * 2;
         this.squealed = false;
+        this.inCar = false; // Whether this stripper is riding in the car
+        this.hired = false; // Whether this stripper has been paid for (stays with player)
+
+        // Armed combat system
+        this.armed = false; // Whether this stripper has a glock
+        this.shootCooldown = 0;
+        this.shootInterval = 1.5; // seconds between shots
+        this.shootRange = 15; // how far she can shoot
+        this.shootDamage = 3;
+        this.currentTarget = null; // NPC she's shooting at
+        this.muzzleFlashTimer = 0;
+        this.gunMesh = null; // Added when armed
+        this.muzzleFlashMesh = null;
+
+        // References set by main.js for combat
+        this.crackheadSpawner = null;
+        this.copSpawner = null;
+        this.glockRef = null; // Reference to player's glock for combat coordination
 
         this.audioCtx = null;
         this.lastSoundTime = 0;
+        this.lastGunShotTime = 0;
 
         this.mesh = this.createMesh();
         this.mesh.position.copy(this.position);
@@ -157,6 +176,256 @@ class Stripper {
         return group;
     }
 
+    // Equip this stripper with a glock
+    equipGlock() {
+        if (this.armed) return;
+        this.armed = true;
+
+        // Add a small glock model to her right hand
+        const gunGroup = new THREE.Group();
+        const slideMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const slideGeo = new THREE.BoxGeometry(0.03, 0.04, 0.16);
+        const slide = new THREE.Mesh(slideGeo, slideMat);
+        gunGroup.add(slide);
+        const gripMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+        const gripGeo = new THREE.BoxGeometry(0.03, 0.08, 0.04);
+        const grip = new THREE.Mesh(gripGeo, gripMat);
+        grip.position.set(0, -0.05, 0.04);
+        grip.rotation.x = 0.2;
+        gunGroup.add(grip);
+        gunGroup.position.set(0.3, 0.7, 0.12);
+        gunGroup.rotation.x = -0.3;
+        this.mesh.add(gunGroup);
+        this.gunMesh = gunGroup;
+
+        // Add muzzle flash (hidden by default)
+        const flashGeo = new THREE.BoxGeometry(0.06, 0.06, 0.03);
+        const flashMat = new THREE.MeshBasicMaterial({ color: 0xffff44, transparent: true, opacity: 0.9 });
+        this.muzzleFlashMesh = new THREE.Mesh(flashGeo, flashMat);
+        this.muzzleFlashMesh.position.set(0, 0, -0.1);
+        this.muzzleFlashMesh.visible = false;
+        gunGroup.add(this.muzzleFlashMesh);
+    }
+
+    // Play a smaller gunshot sound (from NPC position, quieter)
+    playStripperGunshot() {
+        const now = Date.now();
+        if (now - this.lastGunShotTime < 200) return;
+        this.lastGunShotTime = now;
+
+        try {
+            if (!this.audioCtx) {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const ctx = this.audioCtx;
+            const t = ctx.currentTime;
+
+            // Lighter crack (smaller gun sound, higher pitch)
+            const bufferSize = ctx.sampleRate * 0.1;
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.012));
+            }
+            const noise = ctx.createBufferSource();
+            noise.buffer = buffer;
+            const noiseGain = ctx.createGain();
+            noiseGain.gain.setValueAtTime(0.2, t);
+            noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.08);
+            const hpFilter = ctx.createBiquadFilter();
+            hpFilter.type = 'highpass';
+            hpFilter.frequency.setValueAtTime(1200, t);
+            noise.connect(hpFilter);
+            hpFilter.connect(noiseGain);
+            noiseGain.connect(ctx.destination);
+            noise.start(t);
+
+            // Higher pitched thump
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(200, t);
+            osc.frequency.exponentialRampToValueAtTime(60, t + 0.06);
+            const oscGain = ctx.createGain();
+            oscGain.gain.setValueAtTime(0.15, t);
+            oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.06);
+            osc.connect(oscGain);
+            oscGain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.1);
+        } catch(e) {}
+    }
+
+    // Shoot at a target NPC - creates tracer and deals damage
+    shootAtTarget(target, targetType) {
+        if (!target || !target.alive) return;
+
+        this.shootCooldown = this.shootInterval;
+
+        // Play gunshot sound
+        this.playStripperGunshot();
+
+        // Muzzle flash
+        if (this.muzzleFlashMesh) {
+            this.muzzleFlashMesh.visible = true;
+            this.muzzleFlashTimer = 0.06;
+        }
+
+        // Face the target
+        const toTarget = new THREE.Vector3().subVectors(target.position, this.position);
+        toTarget.y = 0;
+        if (toTarget.length() > 0.1) {
+            this.mesh.rotation.y = Math.atan2(toTarget.x, toTarget.z);
+        }
+
+        // Create bullet tracer from stripper to target
+        const start = this.position.clone();
+        start.y += 0.9; // gun height
+        const end = target.position.clone();
+        end.y += 0.7; // center mass
+
+        const tracerGeo = new THREE.BufferGeometry().setFromPoints([start, end]);
+        const tracerMat = new THREE.LineBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.7 });
+        const tracer = new THREE.Line(tracerGeo, tracerMat);
+        this.scene.add(tracer);
+
+        let frame = 0;
+        const fadeTracer = () => {
+            frame++;
+            tracerMat.opacity = Math.max(0, 0.7 - frame * 0.15);
+            if (frame < 6) {
+                requestAnimationFrame(fadeTracer);
+            } else {
+                this.scene.remove(tracer);
+                tracerGeo.dispose();
+                tracerMat.dispose();
+            }
+        };
+        requestAnimationFrame(fadeTracer);
+
+        // Deal damage to target
+        target.health -= this.shootDamage;
+
+        // Blood effect at target
+        this.createSmallBloodEffect(end);
+
+        if (target.health <= 0) {
+            target.alive = false;
+            target.dispose();
+            // Remove from spawner array
+            if (targetType === 'crackhead' && this.crackheadSpawner) {
+                const idx = this.crackheadSpawner.crackheads.indexOf(target);
+                if (idx >= 0) this.crackheadSpawner.crackheads.splice(idx, 1);
+                // Stripper kills earn money for the player!
+                if (this.glockRef) {
+                    this.glockRef.money += 2;
+                    this.glockRef.spawnDollarBill();
+                }
+            } else if (targetType === 'cop' && this.copSpawner) {
+                const idx = this.copSpawner.cops.indexOf(target);
+                if (idx >= 0) this.copSpawner.cops.splice(idx, 1);
+                if (this.glockRef) {
+                    this.glockRef.money += 10;
+                    for (let d = 0; d < 5; d++) {
+                        setTimeout(() => this.glockRef.spawnDollarBill(), d * 80);
+                    }
+                }
+            }
+        } else {
+            // Make target flee from the stripper
+            if (targetType === 'crackhead') {
+                target.fleeing = true;
+                target.fleeDir.subVectors(target.position, this.position);
+                target.fleeDir.y = 0;
+                target.fleeDir.normalize();
+                target.fleeTimer = 3;
+            }
+        }
+    }
+
+    createSmallBloodEffect(hitPos) {
+        for (let i = 0; i < 6; i++) {
+            const size = 0.03 + Math.random() * 0.05;
+            const geo = new THREE.BoxGeometry(size, size, size);
+            const shade = 0.5 + Math.random() * 0.5;
+            const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(shade, 0, 0), transparent: true, opacity: 0.8 });
+            const blood = new THREE.Mesh(geo, mat);
+            blood.position.copy(hitPos);
+            const vx = (Math.random() - 0.5) * 3;
+            const vy = Math.random() * 2;
+            const vz = (Math.random() - 0.5) * 3;
+            this.scene.add(blood);
+            let frame = 0;
+            const animate = () => {
+                frame++;
+                blood.position.x += vx * 0.016;
+                blood.position.y += (vy - frame * 0.2) * 0.016;
+                blood.position.z += vz * 0.016;
+                mat.opacity = Math.max(0, 0.8 - frame / 20);
+                if (frame < 20) { requestAnimationFrame(animate); }
+                else { this.scene.remove(blood); geo.dispose(); mat.dispose(); }
+            };
+            requestAnimationFrame(animate);
+        }
+    }
+
+    // Combat AI - find and shoot enemies when player is fighting
+    updateCombat(dt) {
+        if (!this.armed || !this.hired || this.inCar) return;
+
+        this.shootCooldown = Math.max(0, this.shootCooldown - dt);
+
+        // Update muzzle flash
+        if (this.muzzleFlashTimer > 0) {
+            this.muzzleFlashTimer -= dt;
+            if (this.muzzleFlashTimer <= 0 && this.muzzleFlashMesh) {
+                this.muzzleFlashMesh.visible = false;
+            }
+        }
+
+        // Check if player is in combat (recently shot at crackheads or cops)
+        if (!this.glockRef) return;
+        const now = Date.now() / 1000;
+        const timeSincePlayerShot = now - this.glockRef.lastTargetTime;
+        if (timeSincePlayerShot > this.glockRef.combatTimeout || !this.glockRef.lastTargetType) {
+            this.currentTarget = null;
+            return;
+        }
+
+        // Ready to shoot?
+        if (this.shootCooldown > 0) return;
+
+        const targetType = this.glockRef.lastTargetType;
+
+        // Find nearest enemy of the type the player is fighting
+        let bestTarget = null;
+        let bestDist = Infinity;
+
+        if (targetType === 'crackhead' && this.crackheadSpawner) {
+            for (const ch of this.crackheadSpawner.crackheads) {
+                if (!ch.alive) continue;
+                const dist = ch.position.distanceTo(this.position);
+                if (dist < this.shootRange && dist < bestDist) {
+                    bestDist = dist;
+                    bestTarget = ch;
+                }
+            }
+        } else if (targetType === 'cop' && this.copSpawner) {
+            for (const cop of this.copSpawner.cops) {
+                if (!cop.alive) continue;
+                const dist = cop.position.distanceTo(this.position);
+                if (dist < this.shootRange && dist < bestDist) {
+                    bestDist = dist;
+                    bestTarget = cop;
+                }
+            }
+        }
+
+        if (bestTarget) {
+            this.currentTarget = bestTarget;
+            this.shootAtTarget(bestTarget, targetType);
+        }
+    }
+
     playSqueal() {
         const now = Date.now();
         if (now - this.lastSoundTime < 3000) return;
@@ -205,6 +474,7 @@ class Stripper {
 
     update(dt, playerPos) {
         if (!this.alive) return;
+        if (this.inCar) return; // Skip update when riding in the car
 
         const distToPlayer = this.position.distanceTo(playerPos);
         this.dancePhase += dt * 3;
@@ -231,8 +501,13 @@ class Stripper {
             if (this.velocity.y < -50) this.velocity.y = -50;
         }
 
+        // Hired strippers always follow the player (no range limit)
+        const effectiveAttractRange = this.hired ? Infinity : this.attractRange;
+        const effectiveCloseRange = this.hired ? 2.0 : this.closeRange;
+        const effectiveSpeed = this.hired ? this.speed * 1.5 : this.speed;
+
         // Attracted to player when close enough
-        if (distToPlayer < this.attractRange && distToPlayer > this.closeRange) {
+        if (distToPlayer < effectiveAttractRange && distToPlayer > effectiveCloseRange) {
             if (!this.attracted) {
                 // Just noticed the player - squeal excitedly!
                 this.playSqueal();
@@ -242,11 +517,13 @@ class Stripper {
             this.approachDir.subVectors(playerPos, this.position);
             this.approachDir.y = 0;
             this.approachDir.normalize();
-            const approachSpeed = this.speed * (distToPlayer < 6 ? 1.2 : 0.8);
-            this.velocity.x = this.approachDir.x * approachSpeed;
-            this.velocity.z = this.approachDir.z * approachSpeed;
+            const approachSpeed = effectiveSpeed * (distToPlayer < 6 ? 1.2 : 0.8);
+            // Hired strippers sprint faster when far away to keep up
+            const hiredBoost = (this.hired && distToPlayer > 10) ? 2.0 : 1.0;
+            this.velocity.x = this.approachDir.x * approachSpeed * hiredBoost;
+            this.velocity.z = this.approachDir.z * approachSpeed * hiredBoost;
             this.mesh.rotation.y = Math.atan2(this.approachDir.x, this.approachDir.z);
-        } else if (distToPlayer <= this.closeRange) {
+        } else if (distToPlayer <= effectiveCloseRange) {
             // Very close to player - stop and dance!
             this.attracted = true;
             this.velocity.x = 0;
@@ -259,16 +536,21 @@ class Stripper {
             }
         } else {
             this.attracted = false;
-            // Wander casually
-            this.wanderTimer -= dt;
-            if (this.wanderTimer <= 0) {
-                const angle = Math.random() * Math.PI * 2;
-                this.wanderDir.set(Math.cos(angle), 0, Math.sin(angle));
-                this.wanderTimer = 3 + Math.random() * 5;
+            // Wander casually (hired strippers don't wander - they stay put)
+            if (this.hired) {
+                this.velocity.x = 0;
+                this.velocity.z = 0;
+            } else {
+                this.wanderTimer -= dt;
+                if (this.wanderTimer <= 0) {
+                    const angle = Math.random() * Math.PI * 2;
+                    this.wanderDir.set(Math.cos(angle), 0, Math.sin(angle));
+                    this.wanderTimer = 3 + Math.random() * 5;
+                }
+                this.velocity.x = this.wanderDir.x * this.speed * 0.2;
+                this.velocity.z = this.wanderDir.z * this.speed * 0.2;
+                this.mesh.rotation.y = Math.atan2(this.wanderDir.x, this.wanderDir.z);
             }
-            this.velocity.x = this.wanderDir.x * this.speed * 0.2;
-            this.velocity.z = this.wanderDir.z * this.speed * 0.2;
-            this.mesh.rotation.y = Math.atan2(this.wanderDir.x, this.wanderDir.z);
         }
 
         // Apply movement with collision
@@ -309,6 +591,9 @@ class Stripper {
         }
 
         if (this.position.y < -10) this.position.y = 50;
+
+        // Armed combat AI - shoot enemies when player is fighting
+        this.updateCombat(dt);
 
         // Update mesh position with dance sway or swim animation
         this.mesh.position.copy(this.position);
@@ -385,7 +670,8 @@ class StripperSpawner {
         for (let i = this.strippers.length - 1; i >= 0; i--) {
             const s = this.strippers[i];
             s.update(dt, playerPos);
-            if (s.position.distanceTo(playerPos) > 100) {
+            // Don't despawn strippers that are riding in the car or have been hired
+            if (!s.inCar && !s.hired && s.position.distanceTo(playerPos) > 100) {
                 s.dispose();
                 this.strippers.splice(i, 1);
             }

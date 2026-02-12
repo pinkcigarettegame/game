@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pink Cigarette World</title>
+    <title>GTA 7</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
         <div class="controls-info">
             <p><strong>WASD</strong> - Move | <strong>Space</strong> - Jump/Swim Up | <strong>Shift</strong> - Sprint/Dive</p>
             <p><strong>Mouse</strong> - Look | <strong>Left Click</strong> - Break | <strong>Right Click</strong> - Place</p>
-            <p><strong>1-8</strong> or <strong>Scroll</strong> - Select Block | <strong>G</strong> - Glock 🔫 | <strong>H</strong> - Enter Car 🚗</p>
+            <p><strong>1-8</strong> or <strong>Scroll</strong> - Select Block | <strong>G</strong> - Glock 🔫 | <strong>R</strong> - Reload | <strong>H</strong> - Car 🚗 | <strong>M</strong> - Money 💸</p>
             <p style="color:#ff88cc;">🏊 <strong>You can swim in water!</strong> NPCs swim too! 🌊</p>
             <p style="margin-top:12px; color:#ff6666;">⚠️ <strong>Watch out for exploding cats!</strong> 🐱💥</p>
             <p style="color:#ffaa33;">🤪 <strong>Beware of crackheads - they'll mug you!</strong> 💀</p>
@@ -43,7 +43,24 @@
     <!-- Driving HUD -->
     <div id="driving-hud" style="display:none;">
         <div id="speed-display">0 mph</div>
-        <div id="driving-controls">WASD - Drive | Space - Brake | H - Exit</div>
+        <div id="passenger-display" style="display:none;">💃 0 in car</div>
+        <div id="driving-controls">WASD - Drive | Space - Brake | M - Invite 💃 | U - Arm 🔫 | H - Exit</div>
+    </div>
+
+    <!-- Broke Message -->
+    <div id="broke-message" style="display:none;"></div>
+
+    <!-- Stripper Invite Message -->
+    <div id="invite-message" style="display:none;"></div>
+
+    <!-- Wanted Stars -->
+    <div id="wanted-stars" style="display:none;"></div>
+
+    <!-- Ammo Display -->
+    <div id="ammo-display" style="display:none;">
+        <span id="ammo-icon">🔫</span>
+        <span id="ammo-count">17/17</span>
+        <span id="reload-text" style="display:none;">RELOADING...</span>
     </div>
 
     <!-- HUD -->
@@ -79,8 +96,10 @@
     <script src="js/bongman.js"></script>
     <script src="js/stripper.js"></script>
     <script src="js/crackhead.js"></script>
+    <script src="js/cop.js"></script>
     <script src="js/car.js"></script>
     <script src="js/glock.js"></script>
+    <script src="js/healthpotion.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/main.js"></script>
 </body>

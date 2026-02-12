@@ -30,7 +30,7 @@ class Chunk {
 
     // Check if a world position is on a road, returns {onRoad, roadHeight, distFromCenter, roadWidth, isXRoad, isZRoad}
     getRoadInfo(wx, wz, noise) {
-        const ROAD_SPACING = 48;    // Distance between road centers
+        const ROAD_SPACING = 128;   // Distance between road centers (more sparse)
         const ROAD_WIDTH = 5;       // Half-width of road (total width = 11 blocks)
         const ROAD_SMOOTH = 3;      // Extra blocks for terrain smoothing near road
 
@@ -68,10 +68,10 @@ class Chunk {
                 centerZ = wz;
             }
             
-            // Very wide averaging window (±48 blocks, step 8) for ultra-smooth height
+            // Very wide averaging window (±96 blocks, step 12) for ultra-smooth height
             let sumH = 0;
             let count = 0;
-            for (let s = -48; s <= 48; s += 8) {
+            for (let s = -96; s <= 96; s += 12) {
                 let sx, sz;
                 if (onZRoad || nearZRoad) {
                     sx = wx + s;
@@ -81,7 +81,10 @@ class Chunk {
                     sz = wz + s;
                 }
                 // Only use the lowest frequency octave for smoothness
-                let h = noise.noise2D(sx * 0.005, sz * 0.005) * 12 + 28;
+                // Account for flatness biome in road height calculation
+                const sFlatness = Math.max(0, Math.min(1, (noise.noise2D(sx * 0.003 + 500, sz * 0.003 + 500) + 1) * 0.5));
+                const sMountainScale = 1.0 - sFlatness * 0.88;
+                let h = noise.noise2D(sx * 0.005, sz * 0.005) * 12 * sMountainScale + 28;
                 h = Math.max(WATER_LEVEL + 3, h);
                 sumH += h;
                 count++;
@@ -124,11 +127,15 @@ class Chunk {
                 const wz = worldZ + z;
                 const ri = roadInfos[x + z * CHUNK_SIZE];
 
-                // Multi-octave terrain height
+                // Flatness biome: 0 = mountains, 1 = flat plains
+                const flatness = Math.max(0, Math.min(1, (noise.noise2D(wx * 0.003 + 500, wz * 0.003 + 500) + 1) * 0.5));
+                const mountainScale = 1.0 - flatness * 0.88; // flat areas get ~12% of normal amplitude
+
+                // Multi-octave terrain height (scaled by flatness)
                 let height = 0;
-                height += noise.noise2D(wx * 0.01, wz * 0.01) * 20;
-                height += noise.noise2D(wx * 0.03, wz * 0.03) * 8;
-                height += noise.noise2D(wx * 0.06, wz * 0.06) * 4;
+                height += noise.noise2D(wx * 0.01, wz * 0.01) * 20 * mountainScale;
+                height += noise.noise2D(wx * 0.03, wz * 0.03) * 8 * mountainScale;
+                height += noise.noise2D(wx * 0.06, wz * 0.06) * 4 * mountainScale;
                 height = Math.floor(height + 28);
                 height = Math.max(1, Math.min(CHUNK_HEIGHT - 2, height));
 
@@ -220,9 +227,19 @@ class Chunk {
 
                 // Cigarette generation (replaces trees) - NOT on roads
                 if (!ri.onRoad && !ri.nearRoad && finalHeight > WATER_LEVEL + 2 && this.getBlock(x, finalHeight - 1, z) === BlockType.GRASS) {
-                    const cigNoise = noise.noise2D(wx * 0.5, wz * 0.5);
-                    if (cigNoise > 0.6 && x > 0 && x < CHUNK_SIZE - 1 && z > 0 && z < CHUNK_SIZE - 1) {
-                        this.generateCigarette(x, finalHeight, z);
+                    if (flatness > 0.45 && x > 0 && x < CHUNK_SIZE - 1 && z > 0 && z < CHUNK_SIZE - 1) {
+                        // Flat areas: cigarette tree groves (clustered, denser)
+                        const groveNoise = noise.noise2D(wx * 0.06 + 200, wz * 0.06 + 200);
+                        const groveDensity = noise.noise2D(wx * 0.4 + 300, wz * 0.4 + 300);
+                        if (groveNoise > 0.15 && groveDensity > 0.2) {
+                            this.generateCigarette(x, finalHeight, z);
+                        }
+                    } else {
+                        // Mountainous areas: sparse individual cigarettes (original behavior)
+                        const cigNoise = noise.noise2D(wx * 0.5, wz * 0.5);
+                        if (cigNoise > 0.6 && x > 0 && x < CHUNK_SIZE - 1 && z > 0 && z < CHUNK_SIZE - 1) {
+                            this.generateCigarette(x, finalHeight, z);
+                        }
                     }
                 }
 

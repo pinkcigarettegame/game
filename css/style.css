@@ -388,3 +388,171 @@ canvas {
     padding: 6px 16px;
     border-radius: 4px;
 }
+
+#passenger-display {
+    font-size: 20px;
+    font-weight: bold;
+    color: #ff69b4;
+    font-family: 'Courier New', monospace;
+    text-shadow: 0 0 8px rgba(255,105,180,0.6), 2px 2px 4px rgba(0,0,0,0.8);
+    margin-bottom: 6px;
+}
+
+/* Broke Message */
+#broke-message {
+    position: fixed;
+    top: 30%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.5);
+    font-size: 52px;
+    font-weight: bold;
+    color: #ff2222;
+    text-shadow: 0 0 10px #ff0000, 0 0 20px #880000, 0 0 40px #ff0000, 3px 3px 6px rgba(0,0,0,0.9);
+    z-index: 500;
+    pointer-events: none;
+    font-family: 'Impact', 'Arial Black', sans-serif;
+    letter-spacing: 4px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+#broke-message.active {
+    display: block !important;
+    animation: brokeShake 0.5s ease-out, brokeFade 2.5s ease-out forwards;
+}
+
+@keyframes brokeShake {
+    0% { transform: translate(-50%, -50%) scale(0.5) rotate(0deg); }
+    15% { transform: translate(-48%, -52%) scale(1.15) rotate(-3deg); }
+    30% { transform: translate(-52%, -48%) scale(1.1) rotate(3deg); }
+    45% { transform: translate(-49%, -51%) scale(1.05) rotate(-1deg); }
+    60% { transform: translate(-51%, -49%) scale(1.02) rotate(1deg); }
+    100% { transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+}
+
+@keyframes brokeFade {
+    0% { opacity: 0; }
+    10% { opacity: 1; }
+    70% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -60%) scale(1.1); }
+}
+
+/* Stripper Invite Message */
+#invite-message {
+    position: fixed;
+    top: 25%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.5);
+    font-size: 42px;
+    font-weight: bold;
+    color: #ff69b4;
+    text-shadow: 0 0 10px #ff69b4, 0 0 20px #ff1493, 0 0 40px #ff69b4, 3px 3px 6px rgba(0,0,0,0.9);
+    z-index: 500;
+    pointer-events: none;
+    font-family: 'Impact', 'Arial Black', sans-serif;
+    letter-spacing: 3px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+#invite-message.active {
+    display: block !important;
+    animation: invitePop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), inviteFade 2.5s ease-out forwards;
+}
+
+@keyframes invitePop {
+    0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
+    100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+@keyframes inviteFade {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
+    65% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -65%) scale(1.05); }
+}
+
+/* Wanted Stars (GTA style) */
+#wanted-stars {
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    font-size: 32px;
+    z-index: 400;
+    pointer-events: none;
+    text-shadow: 0 0 8px rgba(255,0,0,0.6), 2px 2px 4px rgba(0,0,0,0.8);
+    letter-spacing: 4px;
+    filter: drop-shadow(0 0 6px rgba(0,0,255,0.4));
+}
+
+#wanted-stars.wanted {
+    animation: wantedFlash 0.8s ease-in-out infinite;
+}
+
+@keyframes wantedFlash {
+    0%, 100% { 
+        filter: drop-shadow(0 0 8px rgba(255,0,0,0.8)) drop-shadow(0 0 16px rgba(255,0,0,0.4));
+    }
+    50% { 
+        filter: drop-shadow(0 0 8px rgba(0,0,255,0.8)) drop-shadow(0 0 16px rgba(0,0,255,0.4));
+    }
+}
+
+/* Ammo Display */
+#ammo-display {
+    position: fixed;
+    bottom: 85px;
+    right: 20px;
+    z-index: 300;
+    pointer-events: none;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.2);
+}
+
+#ammo-icon {
+    font-size: 24px;
+}
+
+#ammo-count {
+    font-size: 22px;
+    color: #FFD700;
+}
+
+#ammo-count.low {
+    color: #ff4444;
+    animation: ammoLow 0.5s ease-in-out infinite;
+}
+
+#ammo-count.empty {
+    color: #ff0000;
+    animation: ammoEmpty 0.3s ease-in-out infinite;
+}
+
+@keyframes ammoLow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+@keyframes ammoEmpty {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(1.1); }
+}
+
+#reload-text {
+    font-size: 16px;
+    color: #ffaa00;
+    animation: reloadPulse 0.6s ease-in-out infinite;
+}
+
+@keyframes reloadPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}

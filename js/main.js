@@ -4,7 +4,8 @@
 
     // Game state
     let scene, camera, renderer;
-    let world, player, input, ui, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner;
+    let world, player, input, ui, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner;
+    let healthPotionSpawner;
     let glock;
     let challenger; // Pimp Dodge Challenger
     let clock;
@@ -12,9 +13,16 @@
     let gKeyWasDown = false;
     let hKeyWasDown = false;
     let mKeyWasDown = false;
+    let rKeyWasDown = false;
+    let uKeyWasDown = false;
     let drivingMode = false;
     let smoothCamPos = null; // For smooth camera follow
     const CAR_ENTER_DISTANCE = 6; // How close to be to enter car
+    const STRIPPER_INVITE_RANGE = 20; // How far to look for strippers to invite
+    const STRIPPER_INVITE_COST = 50; // Cost to invite a stripper into the car
+    const STRIPPER_ARM_COST = 100; // Cost to arm a stripper with a glock
+    let inviteCooldown = 0; // Cooldown between invite attempts
+    let carHitCooldown = 0; // Cooldown to prevent multi-hits on same frame
 
     // High effect state
     let highLevel = 0; // 0 = sober, 1 = max high
@@ -88,10 +96,16 @@
         bongManSpawner = new BongManSpawner(world, scene);
         stripperSpawner = new StripperSpawner(world, scene);
         crackheadSpawner = new CrackheadSpawner(world, scene, player);
+        copSpawner = new CopSpawner(world, scene, player);
         // Add camera to scene so child objects (gun) render
         scene.add(camera);
         glock = new Glock(scene, camera, player);
-        glock.setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner);
+        glock.setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner);
+
+        // Spawn health potion system (Mango Cart Ale pickups)
+        healthPotionSpawner = new HealthPotionSpawner(world, scene);
+        healthPotionSpawner.stripperSpawner = stripperSpawner;
+        healthPotionSpawner.player = player;
 
         // Spawn the pimp Dodge Challenger on the nearest road
         spawnChallenger();
@@ -170,15 +184,39 @@
             // 3rd person camera - smooth follow behind car
             updateDrivingCamera(dt);
             
-            // Update speed display
+            // Update speed display and passenger count
             updateDrivingHUD();
+            
+            // === M KEY: Money spread to invite strippers while driving ===
+            inviteCooldown = Math.max(0, inviteCooldown - dt);
+            const mKeyDown = input.keys['KeyM'];
+            if (mKeyDown && !mKeyWasDown && inviteCooldown <= 0) {
+                inviteStripperToCar();
+                inviteCooldown = 1.0; // 1 second cooldown between invites
+            }
+            mKeyWasDown = mKeyDown;
+            
+            // === U KEY: Upgrade stripper with glock while driving ===
+            const uKeyDown = input.keys['KeyU'];
+            if (uKeyDown && !uKeyWasDown) {
+                upgradeStripperInCar();
+            }
+            uKeyWasDown = uKeyDown;
             
             // Still update NPCs
             if (catSpawner) catSpawner.update(dt, challenger.position);
             if (bongManSpawner) bongManSpawner.update(dt, challenger.position, catSpawner);
             if (stripperSpawner) stripperSpawner.update(dt, challenger.position);
             if (crackheadSpawner) crackheadSpawner.update(dt, challenger.position);
+            if (copSpawner) copSpawner.update(dt, challenger.position);
             ui.update(dt, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, glock);
+            if (glock) glock.update(dt);
+            
+            // Update health potions (Mango Cart Ale pickups)
+            if (healthPotionSpawner) healthPotionSpawner.update(dt, challenger.position);
+            
+            // === CHECK CAR-NPC COLLISIONS (roadkill!) ===
+            checkCarNPCCollisions(dt);
             
             // Consume mouse input so it doesn't accumulate
             input.mouseDX = 0;
@@ -199,6 +237,13 @@
             }
             mKeyWasDown = mKeyDown;
 
+            // R key to reload
+            const rKeyDown = input.keys['KeyR'];
+            if (rKeyDown && !rKeyWasDown && glock && glock.equipped) {
+                glock.startReload();
+            }
+            rKeyWasDown = rKeyDown;
+
             // If glock is equipped, left click shoots instead of breaking blocks
             if (glock && glock.equipped) {
                 if (input.mouseLeft) {
@@ -215,8 +260,12 @@
             if (bongManSpawner) bongManSpawner.update(dt, player.position, catSpawner);
             if (stripperSpawner) stripperSpawner.update(dt, player.position);
             if (crackheadSpawner) crackheadSpawner.update(dt, player.position);
+            if (copSpawner) copSpawner.update(dt, player.position);
             ui.update(dt, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, glock);
             if (glock) glock.update(dt);
+
+            // Update health potions (Mango Cart Ale pickups)
+            if (healthPotionSpawner) healthPotionSpawner.update(dt, player.position);
         }
 
         // === HIGH EFFECT: check proximity to bongmen ===
@@ -379,6 +428,18 @@
         player.drivingCar = challenger;
         challenger.enter();
         
+        // Auto-board any hired strippers that are nearby (they get back in for free)
+        if (stripperSpawner) {
+            const HIRED_BOARD_RANGE = 15; // Hired strippers within this range auto-board
+            for (const s of stripperSpawner.strippers) {
+                if (!s.alive || s.inCar || !s.hired) continue;
+                const dist = s.position.distanceTo(challenger.position);
+                if (dist < HIRED_BOARD_RANGE) {
+                    challenger.addPassenger(s); // addPassenger already sets inCar=true, hired=true
+                }
+            }
+        }
+        
         // Initialize smooth camera position
         smoothCamPos = challenger.getCameraPosition();
         
@@ -494,6 +555,629 @@
         } else {
             speedDisplay.style.color = '#FFD700'; // Gold at low
         }
+        
+        // Update passenger display
+        const passengerDisplay = document.getElementById('passenger-display');
+        if (passengerDisplay) {
+            const count = challenger.getPassengerCount();
+            const armed = challenger.getArmedPassengerCount();
+            const unarmed = challenger.getUnarmedPassengerCount();
+            const money = glock ? glock.money : 0;
+            if (count > 0) {
+                passengerDisplay.style.display = 'block';
+                let text = `💃 ${count} stripper${count > 1 ? 's' : ''}`;
+                if (armed > 0) text += ` (🔫${armed})`;
+                text += ` | 💵 $${money}`;
+                if (unarmed > 0) text += ` | U to arm 🔫 $100`;
+                passengerDisplay.textContent = text;
+                passengerDisplay.style.color = '#FFD700';
+            } else {
+                passengerDisplay.style.display = 'block';
+                passengerDisplay.textContent = `💵 $${money} | M to invite 💃`;
+                passengerDisplay.style.color = money >= STRIPPER_INVITE_COST ? '#00ff88' : '#ff6666';
+            }
+        }
+    }
+
+    function inviteStripperToCar() {
+        if (!challenger || !drivingMode || !glock || !stripperSpawner) return;
+
+        // Check if player has enough money
+        if (glock.money < STRIPPER_INVITE_COST) {
+            // YOU BROKE! 
+            showBrokeMessage();
+            playBrokeSound();
+            return;
+        }
+
+        // Find the nearest stripper within range that isn't already in the car or hired
+        let nearestStripper = null;
+        let nearestDist = Infinity;
+        for (const s of stripperSpawner.strippers) {
+            if (!s.alive || s.inCar || s.hired) continue; // Skip hired strippers - they're already yours
+            const dist = s.position.distanceTo(challenger.position);
+            if (dist < STRIPPER_INVITE_RANGE && dist < nearestDist) {
+                nearestDist = dist;
+                nearestStripper = s;
+            }
+        }
+
+        if (!nearestStripper) {
+            // No strippers nearby - show a different message
+            showNoStrippersMessage();
+            return;
+        }
+
+        // Success! Deduct money and add stripper to car
+        glock.money -= STRIPPER_INVITE_COST;
+        
+        // Play money spread animation
+        glock.playMoneyFlashSound();
+        for (let d = 0; d < 8; d++) {
+            setTimeout(() => glock.spawnDollarBill(), d * 60);
+        }
+
+        // Stripper squeals excitedly and gets in
+        nearestStripper.playSqueal();
+        challenger.addPassenger(nearestStripper);
+
+        // Show success message
+        showInviteMessage(challenger.getPassengerCount());
+    }
+
+    function showBrokeMessage() {
+        const brokeMsg = document.getElementById('broke-message');
+        if (!brokeMsg) return;
+        
+        // Pick a random broke insult
+        const insults = [
+            '💀 YOU BROKE! 💀',
+            '🚫 NO MONEY NO HONEY 🚫',
+            '😂 YOU AIN\'T GOT $50?! 😂',
+            '💸 BROKE BOY ALERT 💸',
+            '🤡 GET THAT BREAD FIRST 🤡',
+            '😭 SHE SAID YOU\'RE BROKE 😭'
+        ];
+        brokeMsg.textContent = insults[Math.floor(Math.random() * insults.length)];
+        
+        // Reset animation by removing and re-adding class
+        brokeMsg.classList.remove('active');
+        brokeMsg.style.display = 'none';
+        // Force reflow
+        void brokeMsg.offsetWidth;
+        brokeMsg.style.display = 'block';
+        brokeMsg.classList.add('active');
+        
+        // Hide after animation
+        setTimeout(() => {
+            brokeMsg.classList.remove('active');
+            brokeMsg.style.display = 'none';
+        }, 2500);
+    }
+
+    function showNoStrippersMessage() {
+        const brokeMsg = document.getElementById('broke-message');
+        if (!brokeMsg) return;
+        
+        brokeMsg.textContent = '🤷 No strippers nearby! 🤷';
+        brokeMsg.classList.remove('active');
+        brokeMsg.style.display = 'none';
+        void brokeMsg.offsetWidth;
+        brokeMsg.style.display = 'block';
+        brokeMsg.classList.add('active');
+        
+        setTimeout(() => {
+            brokeMsg.classList.remove('active');
+            brokeMsg.style.display = 'none';
+        }, 2000);
+    }
+
+    function showInviteMessage(passengerCount) {
+        const inviteMsg = document.getElementById('invite-message');
+        if (!inviteMsg) return;
+        
+        const messages = [
+            '💃 She hopped in! -$50 💸',
+            '💋 New passenger! -$50 💸',
+            '🔥 She\'s in the whip! -$50 💸',
+            '💃 Get in baby! -$50 💸',
+            '😏 Another one! -$50 💸'
+        ];
+        inviteMsg.textContent = messages[Math.floor(Math.random() * messages.length)];
+        
+        // Reset animation
+        inviteMsg.classList.remove('active');
+        inviteMsg.style.display = 'none';
+        void inviteMsg.offsetWidth;
+        inviteMsg.style.display = 'block';
+        inviteMsg.classList.add('active');
+        
+        setTimeout(() => {
+            inviteMsg.classList.remove('active');
+            inviteMsg.style.display = 'none';
+        }, 2500);
+    }
+
+    function upgradeStripperInCar() {
+        if (!challenger || !drivingMode || !glock) return;
+
+        // Check if there are any unarmed passengers
+        if (challenger.getUnarmedPassengerCount() <= 0) {
+            // No one to upgrade
+            const brokeMsg = document.getElementById('broke-message');
+            if (brokeMsg) {
+                if (challenger.getPassengerCount() <= 0) {
+                    brokeMsg.textContent = '🤷 No strippers in car! 🤷';
+                } else {
+                    brokeMsg.textContent = '🔫 All strippers already strapped! 🔫';
+                }
+                brokeMsg.classList.remove('active');
+                brokeMsg.style.display = 'none';
+                void brokeMsg.offsetWidth;
+                brokeMsg.style.display = 'block';
+                brokeMsg.classList.add('active');
+                setTimeout(() => {
+                    brokeMsg.classList.remove('active');
+                    brokeMsg.style.display = 'none';
+                }, 2000);
+            }
+            return;
+        }
+
+        // Check if player has enough money
+        if (glock.money < STRIPPER_ARM_COST) {
+            showBrokeMessage();
+            playBrokeSound();
+            return;
+        }
+
+        // Upgrade the first unarmed passenger
+        const upgraded = challenger.upgradePassenger();
+        if (!upgraded) return;
+
+        // Wire up combat references so she can find targets
+        upgraded.crackheadSpawner = crackheadSpawner;
+        upgraded.copSpawner = copSpawner;
+        upgraded.glockRef = glock;
+
+        // Deduct money
+        glock.money -= STRIPPER_ARM_COST;
+
+        // Play upgrade sound and show message
+        glock.playMoneyFlashSound();
+        showUpgradeMessage();
+    }
+
+    function showUpgradeMessage() {
+        const inviteMsg = document.getElementById('invite-message');
+        if (!inviteMsg) return;
+
+        const messages = [
+            '💃🔫 She\'s strapped! -$100 💸',
+            '🔥🔫 Armed & dangerous! -$100 💸',
+            '💋🔫 She got the glock! -$100 💸',
+            '😈🔫 Ride or die! -$100 💸',
+            '💃🔫 Locked & loaded! -$100 💸'
+        ];
+        inviteMsg.textContent = messages[Math.floor(Math.random() * messages.length)];
+
+        inviteMsg.classList.remove('active');
+        inviteMsg.style.display = 'none';
+        void inviteMsg.offsetWidth;
+        inviteMsg.style.display = 'block';
+        inviteMsg.classList.add('active');
+
+        setTimeout(() => {
+            inviteMsg.classList.remove('active');
+            inviteMsg.style.display = 'none';
+        }, 2500);
+    }
+
+    function playBrokeSound() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const t = ctx.currentTime;
+
+            // Sad trombone / buzzer - descending tone
+            const osc1 = ctx.createOscillator();
+            osc1.type = 'sawtooth';
+            osc1.frequency.setValueAtTime(400, t);
+            osc1.frequency.linearRampToValueAtTime(200, t + 0.3);
+            osc1.frequency.linearRampToValueAtTime(100, t + 0.6);
+            const gain1 = ctx.createGain();
+            gain1.gain.setValueAtTime(0.2, t);
+            gain1.gain.linearRampToValueAtTime(0.15, t + 0.3);
+            gain1.gain.linearRampToValueAtTime(0, t + 0.7);
+            osc1.connect(gain1);
+            gain1.connect(ctx.destination);
+            osc1.start(t);
+            osc1.stop(t + 0.8);
+
+            // Second lower tone for "wah wah" effect
+            const osc2 = ctx.createOscillator();
+            osc2.type = 'sawtooth';
+            osc2.frequency.setValueAtTime(350, t + 0.15);
+            osc2.frequency.linearRampToValueAtTime(150, t + 0.45);
+            osc2.frequency.linearRampToValueAtTime(80, t + 0.75);
+            const gain2 = ctx.createGain();
+            gain2.gain.setValueAtTime(0, t);
+            gain2.gain.linearRampToValueAtTime(0.18, t + 0.2);
+            gain2.gain.linearRampToValueAtTime(0, t + 0.8);
+            osc2.connect(gain2);
+            gain2.connect(ctx.destination);
+            osc2.start(t + 0.15);
+            osc2.stop(t + 0.9);
+
+            // Buzzer noise burst
+            const bufSize = ctx.sampleRate * 0.15;
+            const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+            const data = buf.getChannelData(0);
+            for (let i = 0; i < bufSize; i++) {
+                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.04));
+            }
+            const noise = ctx.createBufferSource();
+            noise.buffer = buf;
+            const noiseGain = ctx.createGain();
+            noiseGain.gain.setValueAtTime(0.15, t);
+            noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+            const lp = ctx.createBiquadFilter();
+            lp.type = 'lowpass';
+            lp.frequency.setValueAtTime(500, t);
+            noise.connect(lp);
+            lp.connect(noiseGain);
+            noiseGain.connect(ctx.destination);
+            noise.start(t);
+        } catch(e) {}
+    }
+
+    // === CAR-NPC COLLISION SYSTEM ===
+    const MIN_KILL_SPEED = 3;    // Minimum speed to kill NPCs (blocks/sec)
+    const MIN_DAMAGE_SPEED = 1.5; // Minimum speed to damage NPCs
+    const HIT_COOLDOWN_TIME = 0.15; // Seconds between hit checks per NPC
+
+    function checkCarNPCCollisions(dt) {
+        if (!challenger || !drivingMode) return;
+
+        const carSpeed = Math.abs(challenger.speed);
+        if (carSpeed < MIN_DAMAGE_SPEED) return;
+
+        carHitCooldown = Math.max(0, carHitCooldown - dt);
+
+        let hitSomething = false;
+        let hitCount = 0;
+
+        // --- Check Cats ---
+        if (catSpawner && catSpawner.cats) {
+            for (let i = catSpawner.cats.length - 1; i >= 0; i--) {
+                const cat = catSpawner.cats[i];
+                if (!cat.alive || cat.exploding) continue;
+                if (challenger.isPointInCarBounds(cat.position)) {
+                    // Kill the cat instantly (don't let it explode - just remove it)
+                    cat.alive = false;
+                    cat.dispose();
+                    catSpawner.cats.splice(i, 1);
+                    spawnCarBloodEffect(cat.position);
+                    hitSomething = true;
+                    hitCount++;
+                }
+            }
+        }
+
+        // --- Check Bongmen ---
+        if (bongManSpawner && bongManSpawner.bongMen) {
+            for (let i = bongManSpawner.bongMen.length - 1; i >= 0; i--) {
+                const bm = bongManSpawner.bongMen[i];
+                if (!bm.alive) continue;
+                if (challenger.isPointInCarBounds(bm.position)) {
+                    bm.alive = false;
+                    bm.dispose();
+                    bongManSpawner.bongMen.splice(i, 1);
+                    spawnCarBloodEffect(bm.position);
+                    hitSomething = true;
+                    hitCount++;
+                    // Running over civilians = wanted!
+                    if (copSpawner) copSpawner.addWanted(1);
+                }
+            }
+        }
+
+        // --- Check Strippers (not hired/in car) ---
+        if (stripperSpawner && stripperSpawner.strippers) {
+            for (let i = stripperSpawner.strippers.length - 1; i >= 0; i--) {
+                const s = stripperSpawner.strippers[i];
+                if (!s.alive || s.inCar || s.hired) continue;
+                if (challenger.isPointInCarBounds(s.position)) {
+                    s.alive = false;
+                    s.dispose();
+                    stripperSpawner.strippers.splice(i, 1);
+                    spawnCarBloodEffect(s.position);
+                    hitSomething = true;
+                    hitCount++;
+                    // Running over civilians = wanted!
+                    if (copSpawner) copSpawner.addWanted(1);
+                }
+            }
+        }
+
+        // --- Check Crackheads ---
+        if (crackheadSpawner && crackheadSpawner.crackheads) {
+            for (let i = crackheadSpawner.crackheads.length - 1; i >= 0; i--) {
+                const ch = crackheadSpawner.crackheads[i];
+                if (!ch.alive) continue;
+                if (challenger.isPointInCarBounds(ch.position)) {
+                    ch.alive = false;
+                    ch.dispose();
+                    crackheadSpawner.crackheads.splice(i, 1);
+                    spawnCarBloodEffect(ch.position);
+                    hitSomething = true;
+                    hitCount++;
+                    // Earn money for crackhead kills
+                    if (glock) {
+                        glock.money += 2;
+                        glock.spawnDollarBill();
+                    }
+                }
+            }
+        }
+
+        // --- Check Cops ---
+        if (copSpawner && copSpawner.cops) {
+            for (let i = copSpawner.cops.length - 1; i >= 0; i--) {
+                const cop = copSpawner.cops[i];
+                if (!cop.alive) continue;
+                if (challenger.isPointInCarBounds(cop.position)) {
+                    // Cops are tougher - need higher speed to one-shot
+                    if (carSpeed >= MIN_KILL_SPEED) {
+                        cop.alive = false;
+                        cop.dispose();
+                        copSpawner.cops.splice(i, 1);
+                        spawnCarBloodEffect(cop.position);
+                        hitSomething = true;
+                        hitCount++;
+                        // Earn money but get more wanted
+                        if (glock) {
+                            glock.money += 10;
+                            for (let d = 0; d < 5; d++) {
+                                setTimeout(() => glock.spawnDollarBill(), d * 80);
+                            }
+                        }
+                        if (copSpawner) copSpawner.addWanted(2);
+                    } else {
+                        // Low speed - just damage the cop and push them
+                        cop.health -= Math.ceil(carSpeed * 3);
+                        const pushDir = new THREE.Vector3(
+                            -Math.sin(challenger.rotation),
+                            0.5,
+                            -Math.cos(challenger.rotation)
+                        );
+                        cop.position.add(pushDir.multiplyScalar(2));
+                        cop.velocity.copy(pushDir.normalize().multiplyScalar(carSpeed * 2));
+                        cop.velocity.y = 5;
+                        spawnCarBloodEffect(cop.position);
+                        hitSomething = true;
+                        if (cop.health <= 0) {
+                            cop.alive = false;
+                            cop.dispose();
+                            copSpawner.cops.splice(i, 1);
+                            if (glock) {
+                                glock.money += 10;
+                                for (let d = 0; d < 5; d++) {
+                                    setTimeout(() => glock.spawnDollarBill(), d * 80);
+                                }
+                            }
+                            if (copSpawner) copSpawner.addWanted(2);
+                        } else {
+                            if (copSpawner) copSpawner.addWanted(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply effects if we hit something
+        if (hitSomething) {
+            playCarImpactSound(hitCount);
+            shakeCarCamera(hitCount);
+            showRunoverMessage(hitCount);
+            // Slow the car down on impact
+            const speedReduction = Math.min(carSpeed * 0.3, 2 + hitCount);
+            if (challenger.speed > 0) {
+                challenger.speed = Math.max(0, challenger.speed - speedReduction);
+            } else {
+                challenger.speed = Math.min(0, challenger.speed + speedReduction);
+            }
+        }
+    }
+
+    function spawnCarBloodEffect(hitPos) {
+        const pos = hitPos.clone();
+        pos.y += 0.5;
+
+        // Big blood splatter - more particles than gun hits
+        for (let i = 0; i < 20; i++) {
+            const size = 0.05 + Math.random() * 0.15;
+            const geo = new THREE.BoxGeometry(size, size, size);
+            const shade = 0.4 + Math.random() * 0.6;
+            const mat = new THREE.MeshBasicMaterial({
+                color: new THREE.Color(shade, 0, 0),
+                transparent: true,
+                opacity: 0.9
+            });
+            const blood = new THREE.Mesh(geo, mat);
+            blood.position.copy(pos);
+
+            // Spray in car's forward direction + random spread
+            const carDir = challenger ? challenger.rotation : 0;
+            const spreadAngle = (Math.random() - 0.5) * Math.PI;
+            const angle = carDir + spreadAngle;
+            const speed = 3 + Math.random() * 8;
+            const vx = -Math.sin(angle) * speed;
+            const vy = 2 + Math.random() * 6;
+            const vz = -Math.cos(angle) * speed;
+
+            scene.add(blood);
+
+            let frame = 0;
+            const animateBlood = () => {
+                frame++;
+                blood.position.x += vx * 0.016;
+                blood.position.y += (vy - frame * 0.4) * 0.016;
+                blood.position.z += vz * 0.016;
+                blood.rotation.x += 0.1;
+                blood.rotation.z += 0.15;
+                mat.opacity = Math.max(0, 0.9 - frame / 30);
+                if (frame < 35) {
+                    requestAnimationFrame(animateBlood);
+                } else {
+                    scene.remove(blood);
+                    geo.dispose();
+                    mat.dispose();
+                }
+            };
+            requestAnimationFrame(animateBlood);
+        }
+
+        // Ground blood pool (flat red disc that fades)
+        const poolGeo = new THREE.BoxGeometry(1.5, 0.02, 1.5);
+        const poolMat = new THREE.MeshBasicMaterial({
+            color: 0x880000,
+            transparent: true,
+            opacity: 0.6
+        });
+        const pool = new THREE.Mesh(poolGeo, poolMat);
+        pool.position.set(pos.x, pos.y - 0.3, pos.z);
+        scene.add(pool);
+
+        let poolFrame = 0;
+        const animatePool = () => {
+            poolFrame++;
+            poolMat.opacity = Math.max(0, 0.6 - poolFrame / 120);
+            const scale = 1 + poolFrame * 0.02;
+            pool.scale.set(scale, 1, scale);
+            if (poolFrame < 120) {
+                requestAnimationFrame(animatePool);
+            } else {
+                scene.remove(pool);
+                poolGeo.dispose();
+                poolMat.dispose();
+            }
+        };
+        requestAnimationFrame(animatePool);
+    }
+
+    function playCarImpactSound(hitCount) {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const t = ctx.currentTime;
+
+            // Heavy thud/crunch impact
+            const bufSize = ctx.sampleRate * 0.2;
+            const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+            const data = buf.getChannelData(0);
+            for (let i = 0; i < bufSize; i++) {
+                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.03));
+            }
+            const noise = ctx.createBufferSource();
+            noise.buffer = buf;
+            const noiseGain = ctx.createGain();
+            const volume = Math.min(0.5, 0.25 + hitCount * 0.08);
+            noiseGain.gain.setValueAtTime(volume, t);
+            noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+            const lp = ctx.createBiquadFilter();
+            lp.type = 'lowpass';
+            lp.frequency.setValueAtTime(600, t);
+            lp.frequency.exponentialRampToValueAtTime(100, t + 0.15);
+            noise.connect(lp);
+            lp.connect(noiseGain);
+            noiseGain.connect(ctx.destination);
+            noise.start(t);
+
+            // Deep bass thump
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(80, t);
+            osc.frequency.exponentialRampToValueAtTime(25, t + 0.15);
+            const oscGain = ctx.createGain();
+            oscGain.gain.setValueAtTime(0.35, t);
+            oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+            osc.connect(oscGain);
+            oscGain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.25);
+
+            // Bone crunch (higher frequency noise burst)
+            const crunchBuf = ctx.createBuffer(1, ctx.sampleRate * 0.08, ctx.sampleRate);
+            const crunchData = crunchBuf.getChannelData(0);
+            for (let i = 0; i < crunchData.length; i++) {
+                crunchData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.01)) *
+                    (Math.random() > 0.7 ? 1.5 : 0.3); // Crackling texture
+            }
+            const crunch = ctx.createBufferSource();
+            crunch.buffer = crunchBuf;
+            const crunchGain = ctx.createGain();
+            crunchGain.gain.setValueAtTime(0.2, t + 0.02);
+            crunchGain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+            const hp = ctx.createBiquadFilter();
+            hp.type = 'highpass';
+            hp.frequency.setValueAtTime(800, t);
+            crunch.connect(hp);
+            hp.connect(crunchGain);
+            crunchGain.connect(ctx.destination);
+            crunch.start(t + 0.02);
+        } catch(e) {}
+    }
+
+    function shakeCarCamera(intensity) {
+        if (!camera || !smoothCamPos) return;
+        const shakeAmount = Math.min(0.8, 0.2 + intensity * 0.15);
+        let frame = 0;
+        const totalFrames = 12;
+        const origPos = smoothCamPos.clone();
+
+        const doShake = () => {
+            frame++;
+            const decay = 1 - frame / totalFrames;
+            if (smoothCamPos) {
+                smoothCamPos.x = origPos.x + (Math.random() - 0.5) * shakeAmount * decay;
+                smoothCamPos.y = origPos.y + (Math.random() - 0.5) * shakeAmount * decay * 0.5;
+                smoothCamPos.z = origPos.z + (Math.random() - 0.5) * shakeAmount * decay;
+            }
+            if (frame < totalFrames) {
+                requestAnimationFrame(doShake);
+            }
+        };
+        requestAnimationFrame(doShake);
+    }
+
+    function showRunoverMessage(hitCount) {
+        const inviteMsg = document.getElementById('invite-message');
+        if (!inviteMsg) return;
+
+        const messages = hitCount > 1 ? [
+            `💀 MULTI KILL! ${hitCount}x 💀`,
+            `🚗💥 ${hitCount} DOWN! 🔥`,
+            `☠️ ROAD RAGE x${hitCount}! ☠️`,
+            `🏎️💀 COMBO x${hitCount}! 💀`
+        ] : [
+            '🚗💥 ROADKILL! 💀',
+            '💀 SPLAT! 🩸',
+            '☠️ WASTED! 🚗',
+            '🏎️💀 HIT & RUN! 💸',
+            '🩸 PANCAKE! 🚗',
+            '💥 BUMPER KILL! ☠️'
+        ];
+        inviteMsg.textContent = messages[Math.floor(Math.random() * messages.length)];
+
+        inviteMsg.classList.remove('active');
+        inviteMsg.style.display = 'none';
+        void inviteMsg.offsetWidth;
+        inviteMsg.style.display = 'block';
+        inviteMsg.classList.add('active');
+
+        setTimeout(() => {
+            inviteMsg.classList.remove('active');
+            inviteMsg.style.display = 'none';
+        }, 2000);
     }
 
     function spawnChallenger() {
