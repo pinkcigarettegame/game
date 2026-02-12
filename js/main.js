@@ -25,6 +25,15 @@
     let inviteCooldown = 0; // Cooldown between invite attempts
     let carHitCooldown = 0; // Cooldown to prevent multi-hits on same frame
 
+    // Shared AudioContext for performance (avoid creating new ones per sound)
+    let sharedAudioCtx = null;
+    function getAudioCtx() {
+        if (!sharedAudioCtx) {
+            sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        return sharedAudioCtx;
+    }
+
     // High effect state
     let highLevel = 0; // 0 = sober, 1 = max high
     let highSpinAngle = 0;
@@ -1033,8 +1042,8 @@
         const pos = hitPos.clone();
         pos.y += 0.5;
 
-        // Big blood splatter - more particles than gun hits
-        for (let i = 0; i < 20; i++) {
+        // Blood splatter particles
+        for (let i = 0; i < 12; i++) {
             const size = 0.05 + Math.random() * 0.15;
             const geo = new THREE.BoxGeometry(size, size, size);
             const shade = 0.4 + Math.random() * 0.6;

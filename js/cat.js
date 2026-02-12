@@ -501,7 +501,7 @@ class CatEnemy {
         // === 5. FLYING DEBRIS PARTICLES ===
         const debrisParticles = [];
         const debrisColors = [0xff6600, 0xff3300, 0xffaa00, 0x884400, 0x666666, 0xff8800, 0xffcc00];
-        for (let i = 0; i < 40; i++) {
+        for (let i = 0; i < 18; i++) {
             const size = 0.1 + Math.random() * 0.35;
             const dGeo = new THREE.BoxGeometry(size, size, size);
             const dMat = new THREE.MeshBasicMaterial({ 
@@ -528,7 +528,7 @@ class CatEnemy {
 
         // === 6. SMOKE CLOUDS (spawn after initial flash) ===
         const smokeClouds = [];
-        for (let i = 0; i < 15; i++) {
+        for (let i = 0; i < 8; i++) {
             const sSize = 0.5 + Math.random() * 1.5;
             const sGeo = new THREE.SphereGeometry(sSize, 6, 6);
             const shade = 0.3 + Math.random() * 0.3;
@@ -557,7 +557,7 @@ class CatEnemy {
 
         // === 7. EMBER SPARKS (tiny bright particles) ===
         const sparks = [];
-        for (let i = 0; i < 25; i++) {
+        for (let i = 0; i < 12; i++) {
             const spGeo = new THREE.BoxGeometry(0.06, 0.06, 0.06);
             const spMat = new THREE.MeshBasicMaterial({ 
                 color: Math.random() > 0.5 ? 0xffff44 : 0xff8800, 

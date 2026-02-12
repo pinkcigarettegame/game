@@ -624,9 +624,9 @@ class World {
         }
     }
 
-    // Raycast for block interaction
+    // Raycast for block interaction (DDA-style for better performance)
     raycast(origin, direction, maxDist) {
-        const step = 0.05;
+        const step = 0.15;
         const pos = origin.clone();
         const dir = direction.clone().normalize().multiplyScalar(step);
         let prevBlockPos = null;
