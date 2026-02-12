@@ -601,10 +601,6 @@ class Multiplayer {
         try {
             if (!conn || !conn.open) return;
             
-            // Check if the underlying data channel is actually usable
-            // PeerJS conn.open can be true while the RTCDataChannel is closing
-            if (conn.dataChannel && conn.dataChannel.readyState !== 'open') return;
-            
             conn.send(data);
         } catch (e) {
             // Don't log ping/pong errors to avoid console spam
