@@ -672,13 +672,14 @@
 
         // === MULTIPLAYER UPDATE ===
         if (mp && mp.connected) {
-            // Broadcast local player position
+            // Broadcast local player position (include car rotation when driving)
             mp.broadcastPosition(
                 player.position,
                 { x: camera.rotation.x, y: camera.rotation.y },
                 player.health,
                 drivingMode,
-                glock ? glock.equipped : false
+                glock ? glock.equipped : false,
+                drivingMode && challenger ? challenger.rotation : undefined
             );
         }
         

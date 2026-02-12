@@ -487,6 +487,7 @@ class Multiplayer {
                             health: data.health || 20,
                             driving: data.driving || false,
                             glockEquipped: data.glockEquipped || false,
+                            carRotation: data.carRotation,
                             lastUpdate: Date.now()
                         };
                     } else {
@@ -499,6 +500,7 @@ class Multiplayer {
                         rp.health = data.health || rp.health;
                         rp.driving = data.driving || false;
                         rp.glockEquipped = data.glockEquipped || false;
+                        rp.carRotation = data.carRotation;
                         if (data.name) rp.name = data.name;
                         rp.lastUpdate = Date.now();
                         rp.interpT = 0; // Reset interpolation
@@ -510,7 +512,7 @@ class Multiplayer {
                     
                     // Host relays position to other clients
                     if (this.isHost) {
-                        this._broadcastFromHost({
+                        const relayMsg = {
                             type: 'position',
                             id: senderId,
                             name: data.name,
@@ -519,7 +521,11 @@ class Multiplayer {
                             health: data.health,
                             driving: data.driving,
                             glockEquipped: data.glockEquipped
-                        }, senderId);
+                        };
+                        if (data.carRotation !== undefined) {
+                            relayMsg.carRotation = data.carRotation;
+                        }
+                        this._broadcastFromHost(relayMsg, senderId);
                     }
                     break;
                     
@@ -637,12 +643,12 @@ class Multiplayer {
     }
     
     // Broadcast local player position (throttled)
-    broadcastPosition(position, rotation, health, driving, glockEquipped) {
+    broadcastPosition(position, rotation, health, driving, glockEquipped, carRotation) {
         const now = Date.now();
         if (now - this.lastPositionBroadcast < this.POSITION_BROADCAST_INTERVAL) return;
         this.lastPositionBroadcast = now;
         
-        this.broadcast({
+        const msg = {
             type: 'position',
             id: this.myId,
             name: this.playerName,
@@ -651,7 +657,11 @@ class Multiplayer {
             health: health,
             driving: driving,
             glockEquipped: glockEquipped
-        });
+        };
+        if (carRotation !== undefined) {
+            msg.carRotation = carRotation;
+        }
+        this.broadcast(msg);
     }
     
     // Broadcast a block change

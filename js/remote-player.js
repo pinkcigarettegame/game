@@ -39,12 +39,18 @@ class RemotePlayerRenderer {
         muzzleFlash.visible = false;
         glockModel.add(muzzleFlash);
         
+        // Car model (hidden by default, shown when driving)
+        const carModel = this._createSimplifiedCarModel();
+        carModel.visible = false;
+        group.add(carModel);
+        
         group.visible = false; // Hidden until we get position data
         this.scene.add(group);
         
         this.players[peerId] = {
             group: group,
             model: model,
+            carModel: carModel,
             nameTag: nameTag,
             healthBar: healthBar,
             healthBarInner: healthBar.children[1], // The green bar
@@ -53,6 +59,8 @@ class RemotePlayerRenderer {
             name: name,
             targetPosition: new THREE.Vector3(0, 30, 0),
             targetRotationY: 0,
+            targetCarRotation: 0,
+            currentCarRotation: 0,
             currentPosition: new THREE.Vector3(0, 30, 0),
             currentRotationY: 0,
             health: 20,
@@ -113,8 +121,21 @@ class RemotePlayerRenderer {
         
         if (data.driving !== undefined) {
             p.driving = data.driving;
-            p.model.visible = !data.driving; // Hide model when driving
+            p.model.visible = !data.driving; // Hide character when driving
+            p.carModel.visible = data.driving; // Show car when driving
             p.nameTag.visible = true; // Always show name
+            // Raise name tag higher when driving (above car)
+            if (data.driving) {
+                p.nameTag.position.set(0, 3.5, 0);
+                p.healthBar.position.set(0, 3.3, 0);
+            } else {
+                p.nameTag.position.set(0, 2.4, 0);
+                p.healthBar.position.set(0, 2.2, 0);
+            }
+        }
+        
+        if (data.carRotation !== undefined) {
+            p.targetCarRotation = data.carRotation;
         }
         
         if (data.glockEquipped !== undefined) {
@@ -159,6 +180,15 @@ class RemotePlayerRenderer {
             while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
             p.currentRotationY += rotDiff * Math.min(1, this.interpSpeed * dt);
             p.model.rotation.y = p.currentRotationY;
+            
+            // Car rotation interpolation (when driving)
+            if (p.driving && p.carModel.visible) {
+                let carRotDiff = p.targetCarRotation - p.currentCarRotation;
+                while (carRotDiff > Math.PI) carRotDiff -= Math.PI * 2;
+                while (carRotDiff < -Math.PI) carRotDiff += Math.PI * 2;
+                p.currentCarRotation += carRotDiff * Math.min(1, this.interpSpeed * dt);
+                p.carModel.rotation.y = p.currentCarRotation;
+            }
             
             // Walk animation based on movement
             const moveSpeed = prevPos.distanceTo(p.currentPosition) / Math.max(dt, 0.001);
@@ -468,6 +498,189 @@ class RemotePlayerRenderer {
         const flash = new THREE.Mesh(flashGeo, flashMat);
         flash.position.set(0, 0, 0.35);
         return flash;
+    }
+    
+    // Create a simplified Dodge Challenger model for remote players driving
+    _createSimplifiedCarModel() {
+        const group = new THREE.Group();
+        
+        // Random pimp color palette (same as DodgeChallenger)
+        const carColors = [
+            { main: 0x8B008B, neon: 0xFF00FF },
+            { main: 0x008B8B, neon: 0x00FFFF },
+            { main: 0xFF1493, neon: 0xFF69B4 },
+            { main: 0x4444FF, neon: 0x6666FF },
+            { main: 0x32CD32, neon: 0x44FF44 },
+            { main: 0xDAA520, neon: 0xFFD700 },
+            { main: 0x9400D3, neon: 0xBB44FF },
+            { main: 0xFF4500, neon: 0xFF6633 },
+        ];
+        const chosen = carColors[Math.floor(Math.random() * carColors.length)];
+        
+        const bodyMat = new THREE.MeshLambertMaterial({ color: chosen.main });
+        const blackMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const goldMat = new THREE.MeshBasicMaterial({ color: 0xFFD700 });
+        const chromeMat = new THREE.MeshLambertMaterial({ color: 0xE8E8E8 });
+        const glassMat = new THREE.MeshLambertMaterial({ color: 0x334455, transparent: true, opacity: 0.4 });
+        const tireMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+        const neonMat = new THREE.MeshBasicMaterial({ color: chosen.neon });
+        const headlightMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
+        const taillightMat = new THREE.MeshBasicMaterial({ color: 0xff1111 });
+        
+        // Main body
+        const bodyGeo = new THREE.BoxGeometry(2.2, 0.7, 5.0);
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.set(0, 0.65, 0);
+        group.add(body);
+        
+        // Side panels
+        const sidePanelGeo = new THREE.BoxGeometry(2.4, 0.3, 4.8);
+        const sidePanel = new THREE.Mesh(sidePanelGeo, bodyMat);
+        sidePanel.position.set(0, 0.45, 0);
+        group.add(sidePanel);
+        
+        // Hood
+        const hoodGeo = new THREE.BoxGeometry(2.0, 0.15, 1.8);
+        const hood = new THREE.Mesh(hoodGeo, bodyMat);
+        hood.position.set(0, 1.05, -1.3);
+        group.add(hood);
+        
+        // Hood scoop
+        const scoopGeo = new THREE.BoxGeometry(0.5, 0.2, 0.8);
+        const scoop = new THREE.Mesh(scoopGeo, blackMat);
+        scoop.position.set(0, 1.2, -1.2);
+        group.add(scoop);
+        
+        // Trunk
+        const trunkGeo = new THREE.BoxGeometry(2.0, 0.15, 1.2);
+        const trunk = new THREE.Mesh(trunkGeo, bodyMat);
+        trunk.position.set(0, 1.05, 1.4);
+        group.add(trunk);
+        
+        // Spoiler
+        const spoilerGeo = new THREE.BoxGeometry(2.1, 0.08, 0.3);
+        const spoiler = new THREE.Mesh(spoilerGeo, goldMat);
+        spoiler.position.set(0, 1.2, 2.0);
+        group.add(spoiler);
+        
+        // Cabin
+        const cabinGeo = new THREE.BoxGeometry(1.8, 0.6, 2.0);
+        const cabin = new THREE.Mesh(cabinGeo, bodyMat);
+        cabin.position.set(0, 1.3, 0.2);
+        group.add(cabin);
+        
+        // Roof
+        const roofGeo = new THREE.BoxGeometry(1.7, 0.1, 1.8);
+        const roof = new THREE.Mesh(roofGeo, bodyMat);
+        roof.position.set(0, 1.65, 0.2);
+        group.add(roof);
+        
+        // Windshield
+        const windshieldGeo = new THREE.BoxGeometry(1.6, 0.5, 0.08);
+        const windshield = new THREE.Mesh(windshieldGeo, glassMat);
+        windshield.position.set(0, 1.3, -0.75);
+        windshield.rotation.x = -0.25;
+        group.add(windshield);
+        
+        // Rear window
+        const rearWindowGeo = new THREE.BoxGeometry(1.5, 0.4, 0.08);
+        const rearWindow = new THREE.Mesh(rearWindowGeo, glassMat);
+        rearWindow.position.set(0, 1.3, 1.15);
+        rearWindow.rotation.x = 0.2;
+        group.add(rearWindow);
+        
+        // Gold stripes
+        const stripeGeo = new THREE.BoxGeometry(0.02, 0.08, 4.6);
+        const stripeL = new THREE.Mesh(stripeGeo, goldMat);
+        stripeL.position.set(-1.12, 0.7, 0);
+        group.add(stripeL);
+        const stripeR = new THREE.Mesh(stripeGeo, goldMat);
+        stripeR.position.set(1.12, 0.7, 0);
+        group.add(stripeR);
+        
+        // Headlights
+        const headlightGeo = new THREE.BoxGeometry(0.35, 0.2, 0.1);
+        const hlL = new THREE.Mesh(headlightGeo, headlightMat);
+        hlL.position.set(-0.7, 0.65, -2.53);
+        group.add(hlL);
+        const hlR = new THREE.Mesh(headlightGeo, headlightMat);
+        hlR.position.set(0.7, 0.65, -2.53);
+        group.add(hlR);
+        
+        // Taillights
+        const taillightGeo = new THREE.BoxGeometry(0.8, 0.15, 0.08);
+        const tlL = new THREE.Mesh(taillightGeo, taillightMat);
+        tlL.position.set(-0.55, 0.65, 2.53);
+        group.add(tlL);
+        const tlR = new THREE.Mesh(taillightGeo, taillightMat);
+        tlR.position.set(0.55, 0.65, 2.53);
+        group.add(tlR);
+        
+        // Wheels (4x)
+        const wheelPositions = [
+            { x: -1.05, z: -1.5 },
+            { x: 1.05, z: -1.5 },
+            { x: -1.05, z: 1.5 },
+            { x: 1.05, z: 1.5 }
+        ];
+        for (const wp of wheelPositions) {
+            const tireGeo = new THREE.BoxGeometry(0.35, 0.6, 0.6);
+            const tire = new THREE.Mesh(tireGeo, tireMat);
+            tire.position.set(wp.x, 0.3, wp.z);
+            group.add(tire);
+            const rimGeo = new THREE.BoxGeometry(0.37, 0.4, 0.4);
+            const rim = new THREE.Mesh(rimGeo, goldMat);
+            rim.position.set(wp.x, 0.3, wp.z);
+            group.add(rim);
+        }
+        
+        // Neon underglow
+        const neonSideGeo = new THREE.BoxGeometry(0.08, 0.06, 4.2);
+        const neonL = new THREE.Mesh(neonSideGeo, neonMat);
+        neonL.position.set(-1.15, 0.15, 0);
+        group.add(neonL);
+        const neonR = new THREE.Mesh(neonSideGeo, neonMat);
+        neonR.position.set(1.15, 0.15, 0);
+        group.add(neonR);
+        const neonFBGeo = new THREE.BoxGeometry(2.0, 0.06, 0.08);
+        const neonF = new THREE.Mesh(neonFBGeo, neonMat);
+        neonF.position.set(0, 0.15, -2.3);
+        group.add(neonF);
+        const neonB = new THREE.Mesh(neonFBGeo, neonMat);
+        neonB.position.set(0, 0.15, 2.3);
+        group.add(neonB);
+        
+        // Ground glow
+        const glowGeo = new THREE.BoxGeometry(2.0, 0.02, 4.0);
+        const glowMat = new THREE.MeshBasicMaterial({ color: chosen.neon, transparent: true, opacity: 0.15 });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        glow.position.set(0, 0.02, 0);
+        group.add(glow);
+        
+        // Gold bumpers
+        const bumperGeo = new THREE.BoxGeometry(2.3, 0.12, 0.15);
+        const frontBumper = new THREE.Mesh(bumperGeo, goldMat);
+        frontBumper.position.set(0, 0.38, -2.5);
+        group.add(frontBumper);
+        const rearBumper = new THREE.Mesh(bumperGeo, goldMat);
+        rearBumper.position.set(0, 0.38, 2.5);
+        group.add(rearBumper);
+        
+        // Exhaust pipes
+        const exhaustGeo = new THREE.BoxGeometry(0.12, 0.12, 0.3);
+        const exL = new THREE.Mesh(exhaustGeo, chromeMat);
+        exL.position.set(-0.6, 0.3, 2.65);
+        group.add(exL);
+        const exR = new THREE.Mesh(exhaustGeo, chromeMat);
+        exR.position.set(0.6, 0.3, 2.65);
+        group.add(exR);
+        
+        // Position car so wheels sit on ground (Y offset)
+        // The car's lowest point is wheels at Y=0, group is placed at player position - 1.8
+        // So we need to offset the car up by about 1.8 to sit on the ground
+        group.position.set(0, 1.8, 0);
+        
+        return group;
     }
     
     // Get count of visible remote players
