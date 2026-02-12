@@ -3,6 +3,8 @@
 
 # Allow game files
 !.gitignore
+!README.md
+!*.png
 !index.html
 !css/
 !css/**
