@@ -64,15 +64,6 @@ class UI {
             }
         });
 
-        // Handle scroll wheel for hotbar
-        const scroll = this.player.world ? 0 : 0; // scroll handled in main
-
-        // Update debug info
-        const pos = this.player.position;
-        const chunkX = Math.floor(pos.x / CHUNK_SIZE);
-        const chunkZ = Math.floor(pos.z / CHUNK_SIZE);
-        const blockName = BlockNames[HotbarBlocks[this.player.selectedSlot]] || 'Unknown';
-        
         // Update health bar
         const healthPct = (this.player.health / this.player.maxHealth) * 100;
         if (this.healthBarInner) {
@@ -91,38 +82,78 @@ class UI {
             }
         }
 
+        // Track previous money for flash effect
+        const currentMoney = glock ? glock.money : 0;
+        if (this._prevMoney === undefined) this._prevMoney = currentMoney;
+        const moneyChanged = currentMoney !== this._prevMoney;
+        this._prevMoney = currentMoney;
+
         const catCount = catSpawner ? catSpawner.getCatCount() : 0;
         const bongCount = bongManSpawner ? bongManSpawner.getCount() : 0;
         const stripperCount = stripperSpawner ? stripperSpawner.getCount() : 0;
         const crackheadCount = crackheadSpawner ? crackheadSpawner.getCount() : 0;
-        const glockStatus = glock && glock.equipped ? '🔫 GLOCK EQUIPPED' : '🔫 Press G for Glock';
-        const moneyDisplay = glock ? `💵 $${glock.money}${glock.money > 0 ? ' (M to flex)' : ''}` : '';
-        const swimStatus = this.player.inWater ? (this.player.headUnderwater ? '🏊 UNDERWATER' : '🌊 Swimming') : '';
-        
-        // Count collected strippers (your hooker collection)
+        const hp = this.player.health;
+        const maxHp = this.player.maxHealth;
+        const glockEquipped = glock && glock.equipped;
+        const isSwimming = this.player.inWater;
+        const isUnderwater = this.player.headUnderwater;
+
+        // Count collected strippers
         let collectedCount = 0;
         if (stripperSpawner) {
             for (const s of stripperSpawner.strippers) {
                 if (s.alive && (s.collected || s.inCar)) collectedCount++;
             }
         }
-        const collectionDisplay = collectedCount > 0 ? `👑 Collection: ${collectedCount} 💃 (M to show off)` : '';
-        
-        this.debugInfo.innerHTML = 
-            `FPS: ${this.lastFps}<br>` +
-            `XYZ: ${pos.x.toFixed(1)} / ${pos.y.toFixed(1)} / ${pos.z.toFixed(1)}<br>` +
-            `Chunk: ${chunkX}, ${chunkZ}<br>` +
-            `Block: ${blockName}<br>` +
-            `❤️ HP: ${this.player.health}/${this.player.maxHealth}<br>` +
-            (swimStatus ? `${swimStatus}<br>` : '') +
-            `🐱 Cats: ${catCount}<br>` +
-            `✌️ Hippies: ${bongCount}<br>` +
-            `💃 Strippers: ${stripperCount}<br>` +
-            `🤪 Crackheads: ${crackheadCount}<br>` +
-            `${glockStatus}<br>` +
-            `${moneyDisplay}<br>` +
-            (collectionDisplay ? `${collectionDisplay}<br>` : '') +
-            `Seed: ${this.world.seed}`;
+
+        // Build graphic HUD rows
+        let rows = '';
+
+        // 💰 Money (always first, most important)
+        const moneyFlash = moneyChanged ? ' flash' : '';
+        rows += `<div class="hud-row${moneyFlash}"><span class="hud-emoji">💵</span><span class="hud-val money">$${currentMoney}</span></div>`;
+
+        // ❤️ HP
+        const hpDanger = hp <= maxHp * 0.3 ? ' danger' : '';
+        rows += `<div class="hud-row${hpDanger}"><span class="hud-emoji">❤️</span><span class="hud-val hp">${hp}</span></div>`;
+
+        // 🔫 Glock
+        const glockClass = glockEquipped ? ' equipped' : '';
+        const glockText = glockEquipped ? '🔥' : 'G';
+        rows += `<div class="hud-row${glockClass}"><span class="hud-emoji">🔫</span><span class="hud-val glock">${glockText}</span></div>`;
+
+        // 🐱 Cats
+        if (catCount > 0) {
+            rows += `<div class="hud-row"><span class="hud-emoji">🐱</span><span class="hud-val cats">${catCount}</span></div>`;
+        }
+
+        // 🌿 Hippies
+        if (bongCount > 0) {
+            rows += `<div class="hud-row"><span class="hud-emoji">🌿</span><span class="hud-val hippies">${bongCount}</span></div>`;
+        }
+
+        // 💃 Strippers
+        if (stripperCount > 0) {
+            rows += `<div class="hud-row"><span class="hud-emoji">💃</span><span class="hud-val strippers">${stripperCount}</span></div>`;
+        }
+
+        // 💀 Crackheads
+        if (crackheadCount > 0) {
+            rows += `<div class="hud-row"><span class="hud-emoji">💀</span><span class="hud-val crackheads">${crackheadCount}</span></div>`;
+        }
+
+        // 👑 Collection
+        if (collectedCount > 0) {
+            rows += `<div class="hud-row"><span class="hud-emoji">👑</span><span class="hud-val collection">${collectedCount}💃</span></div>`;
+        }
+
+        // 🌊 Swimming
+        if (isSwimming) {
+            const swimEmoji = isUnderwater ? '🫧' : '🌊';
+            rows += `<div class="hud-row"><span class="hud-emoji">${swimEmoji}</span><span class="hud-val swim">${isUnderwater ? '!!!' : '~'}</span></div>`;
+        }
+
+        this.debugInfo.innerHTML = rows;
     }
 }
 
