@@ -1022,6 +1022,36 @@ class LiquorStoreSpawner {
         }
     }
 
+    // Check if a candidate position is too close to a road intersection
+    // The store footprint extends ~9 blocks in local X and from -7 to +9 in local Z
+    // We need to ensure the perpendicular road doesn't overlap with the building/parking lot
+    isNearIntersection(candX, candZ, candRot) {
+        const ROAD_SPACING = 128;
+        const ROAD_HALF_WIDTH = 5;
+        // Minimum safe distance from perpendicular road center to store center
+        // Building extends 9 blocks in the perpendicular direction, plus road half-width, plus margin
+        const MIN_PERP_DIST = 16; // 9 (building half-width) + 5 (road half-width) + 2 (margin)
+
+        const rotNorm = ((candRot % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const facesX = (Math.abs(rotNorm - Math.PI / 2) < 0.1 || Math.abs(rotNorm - Math.PI * 3 / 2) < 0.1);
+        // facesX: store faces along X axis (rotation ~PI/2 or ~3PI/2), meaning it's alongside a Z-aligned road
+        // In this case, the perpendicular road is X-aligned (runs along X, spaced along Z)
+
+        if (facesX) {
+            // Store is alongside a Z-aligned road. Check distance to nearest X-aligned road (perpendicular)
+            const nearestZRoad = Math.round(candZ / ROAD_SPACING) * ROAD_SPACING;
+            const distToPerp = Math.abs(candZ - nearestZRoad);
+            if (distToPerp < MIN_PERP_DIST) return true;
+        } else {
+            // Store faces along Z axis. Check distance to nearest Z-aligned road (perpendicular)
+            const nearestXRoad = Math.round(candX / ROAD_SPACING) * ROAD_SPACING;
+            const distToPerp = Math.abs(candX - nearestXRoad);
+            if (distToPerp < MIN_PERP_DIST) return true;
+        }
+
+        return false;
+    }
+
     trySpawn(playerPos) {
         // Place stores flush with roads - parking lot faces the road
         // Roads are at ROAD_SPACING intervals (128 blocks apart)
@@ -1042,9 +1072,13 @@ class LiquorStoreSpawner {
         // rotation: 0 = front faces +Z, PI = front faces -Z, PI/2 = front faces +X, -PI/2 = front faces -X
         const candidates = [];
 
+        // Offsets along the road from the nearest intersection
+        // Avoid 0 offset (right at intersection) - use offsets that keep stores away from crossroads
+        // MIN_PERP_DIST is 16, so offsets must be >= 16 to be safe from the perpendicular road
+        const offsets = [-50, -35, -20, 20, 35, 50];
+
         // Along Z-aligned road (road runs along Z at x=nearestXRoad)
         // Store on the +X side of road, facing -X toward road
-        const offsets = [-40, -20, 0, 20, 40];
         for (const oz of offsets) {
             // +X side: store center at road + setback, facing road (rotation = -PI/2, front faces -X)
             candidates.push({
@@ -1078,7 +1112,7 @@ class LiquorStoreSpawner {
 
         // Also check adjacent road grid cells
         for (const roadOff of [ROAD_SPACING, -ROAD_SPACING]) {
-            for (const oz of [0, 20, -20]) {
+            for (const oz of offsets) {
                 candidates.push({
                     x: nearestXRoad + roadOff + BUILDING_SETBACK,
                     z: nearestZRoad + oz,
@@ -1090,7 +1124,7 @@ class LiquorStoreSpawner {
                     rot: Math.PI / 2
                 });
             }
-            for (const ox of [0, 20, -20]) {
+            for (const ox of offsets) {
                 candidates.push({
                     x: nearestXRoad + ox,
                     z: nearestZRoad + roadOff + BUILDING_SETBACK,
@@ -1131,6 +1165,9 @@ class LiquorStoreSpawner {
                 if (sd < 60) { tooClose = true; break; }
             }
             if (tooClose) continue;
+
+            // Reject candidates too close to road intersections
+            if (this.isNearIntersection(cand.x, cand.z, cand.rot)) continue;
 
             // Get road height at the parking lot edge to place store flush with road
             // Calculate where the road edge would be for this candidate
@@ -1185,6 +1222,7 @@ class LiquorStoreSpawner {
     forceSpawnAtRoad(nearX, nearZ) {
         const ROAD_SPACING = 128;
         const BUILDING_SETBACK = 15;
+        const MIN_PERP_DIST = 16; // Minimum distance from perpendicular road center
 
         // Find nearest road to the given position
         const nearestXRoad = Math.round(nearX / ROAD_SPACING) * ROAD_SPACING;
@@ -1202,12 +1240,36 @@ class LiquorStoreSpawner {
             storeX = nearestXRoad + BUILDING_SETBACK;
             storeZ = nearZ;
             storeRot = -Math.PI / 2; // Front faces -X toward road
+
+            // Avoid intersection: check distance to nearest X-aligned road (perpendicular)
+            const nearestPerpRoad = Math.round(storeZ / ROAD_SPACING) * ROAD_SPACING;
+            const distToPerp = Math.abs(storeZ - nearestPerpRoad);
+            if (distToPerp < MIN_PERP_DIST) {
+                // Shift store along the road away from intersection
+                if (storeZ >= nearestPerpRoad) {
+                    storeZ = nearestPerpRoad + MIN_PERP_DIST + 5;
+                } else {
+                    storeZ = nearestPerpRoad - MIN_PERP_DIST - 5;
+                }
+            }
         } else {
             // Closer to an X-aligned road (runs along X at z=nearestZRoad)
             // Place store on the -Z side (front faces +Z toward road)
             storeX = nearX;
             storeZ = nearestZRoad - BUILDING_SETBACK;
             storeRot = 0; // Front faces +Z toward road
+
+            // Avoid intersection: check distance to nearest Z-aligned road (perpendicular)
+            const nearestPerpRoad = Math.round(storeX / ROAD_SPACING) * ROAD_SPACING;
+            const distToPerp = Math.abs(storeX - nearestPerpRoad);
+            if (distToPerp < MIN_PERP_DIST) {
+                // Shift store along the road away from intersection
+                if (storeX >= nearestPerpRoad) {
+                    storeX = nearestPerpRoad + MIN_PERP_DIST + 5;
+                } else {
+                    storeX = nearestPerpRoad - MIN_PERP_DIST - 5;
+                }
+            }
         }
 
         // Make sure terrain is loaded

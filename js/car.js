@@ -423,8 +423,20 @@ class DodgeChallenger {
         const group = new THREE.Group();
 
         // === COLORS - Pimp Edition ===
-        const bodyColor = new THREE.MeshLambertMaterial({ color: 0x8B008B }); // Deep purple/magenta
-        const bodyColorDark = new THREE.MeshLambertMaterial({ color: 0x5B005B }); // Darker purple
+        // Randomize car color from a pimp palette
+        const carColors = [
+            { main: 0x8B008B, dark: 0x5B005B, neon: 0xFF00FF }, // Deep purple/magenta
+            { main: 0x008B8B, dark: 0x005B5B, neon: 0x00FFFF }, // Cyan/teal
+            { main: 0xFF1493, dark: 0xAA0066, neon: 0xFF69B4 }, // Hot pink
+            { main: 0x4444FF, dark: 0x2222AA, neon: 0x6666FF }, // Electric blue
+            { main: 0x32CD32, dark: 0x1E8B1E, neon: 0x44FF44 }, // Lime green
+            { main: 0xDAA520, dark: 0x8B6914, neon: 0xFFD700 }, // Gold
+            { main: 0x9400D3, dark: 0x5B0088, neon: 0xBB44FF }, // Dark violet
+            { main: 0xFF4500, dark: 0xAA2200, neon: 0xFF6633 }, // Orange red
+        ];
+        const chosenColor = carColors[Math.floor(Math.random() * carColors.length)];
+        const bodyColor = new THREE.MeshLambertMaterial({ color: chosenColor.main });
+        const bodyColorDark = new THREE.MeshLambertMaterial({ color: chosenColor.dark });
         const chromeMat = new THREE.MeshLambertMaterial({ color: 0xE8E8E8 }); // Chrome/silver
         const goldMat = new THREE.MeshLambertMaterial({ color: 0xFFD700 }); // Gold trim
         const goldMatShiny = new THREE.MeshBasicMaterial({ color: 0xFFD700 }); // Bright gold
@@ -436,7 +448,7 @@ class DodgeChallenger {
         const taillightMat = new THREE.MeshBasicMaterial({ color: 0xff1111 }); // Taillights
         const interiorMat = new THREE.MeshLambertMaterial({ color: 0x8B0000 }); // Red leather interior
         const furMat = new THREE.MeshLambertMaterial({ color: 0xFFF0F5 }); // White fur (dashboard)
-        const neonMat = new THREE.MeshBasicMaterial({ color: 0xFF00FF }); // Neon pink underglow
+        const neonMat = new THREE.MeshBasicMaterial({ color: chosenColor.neon }); // Neon underglow (matches body)
 
         // === BODY - Low-rider stance ===
         // Main body (long, wide, low muscle car shape)
@@ -669,7 +681,7 @@ class DodgeChallenger {
 
         // Neon ground glow (flat plane underneath)
         const glowGeo = new THREE.BoxGeometry(2.0, 0.02, 4.0);
-        const glowMat = new THREE.MeshBasicMaterial({ color: 0xFF00FF, transparent: true, opacity: 0.15 });
+        const glowMat = new THREE.MeshBasicMaterial({ color: chosenColor.neon, transparent: true, opacity: 0.15 });
         const glow = new THREE.Mesh(glowGeo, glowMat);
         glow.position.set(0, 0.02, 0);
         group.add(glow);
@@ -764,7 +776,7 @@ class DodgeChallenger {
         group.add(plate);
         // Plate text background
         const plateTextGeo = new THREE.BoxGeometry(0.4, 0.1, 0.025);
-        const plateTextMat = new THREE.MeshBasicMaterial({ color: 0x8B008B });
+        const plateTextMat = new THREE.MeshBasicMaterial({ color: chosenColor.main });
         const plateText = new THREE.Mesh(plateTextGeo, plateTextMat);
         plateText.position.set(0, 0.4, 2.58);
         group.add(plateText);
