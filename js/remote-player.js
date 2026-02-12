@@ -14,18 +14,19 @@ class RemotePlayerRenderer {
         
         const group = new THREE.Group();
         
-        // Build the gangsta character model
+        // Build the gangsta character model (scaled up 1.3x for better visibility)
         const model = this._createCharacterModel();
+        model.scale.set(1.3, 1.3, 1.3);
         group.add(model);
         
-        // Name tag (sprite above head)
+        // Name tag (sprite above head - raised for scaled model)
         const nameTag = this._createNameTag(name);
-        nameTag.position.set(0, 2.0, 0);
+        nameTag.position.set(0, 2.4, 0);
         group.add(nameTag);
         
         // Health bar above name
         const healthBar = this._createHealthBar();
-        healthBar.position.set(0, 1.85, 0);
+        healthBar.position.set(0, 2.2, 0);
         group.add(healthBar);
         
         // Glock model (hidden by default)
