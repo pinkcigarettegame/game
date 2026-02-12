@@ -21,9 +21,11 @@ class Stripper {
         this.squealed = false;
         this.inCar = false; // Whether this stripper is riding in the car
         this.hired = false; // Whether this stripper has been paid for (stays with player)
+        this.carRef = null; // Reference to the car when riding in it
 
         // Armed combat system
         this.armed = false; // Whether this stripper has a glock
+        this.upgraded = false; // Whether her glock has been upgraded (dual glocks!)
         this.shootCooldown = 0;
         this.shootInterval = 1.5; // seconds between shots
         this.shootRange = 15; // how far she can shoot
@@ -37,6 +39,8 @@ class Stripper {
         this.crackheadSpawner = null;
         this.copSpawner = null;
         this.glockRef = null; // Reference to player's glock for combat coordination
+        this.playerRef = null; // Reference to player object
+        this.cameraRef = null; // Reference to camera for line-of-fire avoidance
 
         this.audioCtx = null;
         this.lastSoundTime = 0;
@@ -207,6 +211,42 @@ class Stripper {
         gunGroup.add(this.muzzleFlashMesh);
     }
 
+    // Upgrade to dual glocks - more damage, faster fire rate, second gun on left hand
+    upgradeGlock() {
+        if (!this.armed || this.upgraded) return;
+        this.upgraded = true;
+
+        // Boost stats: 2x damage, 40% faster fire rate, more range
+        this.shootDamage = 6;
+        this.shootInterval = 0.9;
+        this.shootRange = 22;
+
+        // Add a second glock to her left hand (gold-plated!)
+        const gunGroup2 = new THREE.Group();
+        const slideMat = new THREE.MeshLambertMaterial({ color: 0xCCA020 }); // Gold slide
+        const slideGeo = new THREE.BoxGeometry(0.03, 0.04, 0.16);
+        const slide = new THREE.Mesh(slideGeo, slideMat);
+        gunGroup2.add(slide);
+        const gripMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+        const gripGeo = new THREE.BoxGeometry(0.03, 0.08, 0.04);
+        const grip = new THREE.Mesh(gripGeo, gripMat);
+        grip.position.set(0, -0.05, 0.04);
+        grip.rotation.x = 0.2;
+        gunGroup2.add(grip);
+        gunGroup2.position.set(-0.3, 0.7, 0.12);
+        gunGroup2.rotation.x = -0.3;
+        this.mesh.add(gunGroup2);
+
+        // Add muzzle flash to second gun
+        const flashGeo2 = new THREE.BoxGeometry(0.06, 0.06, 0.03);
+        const flashMat2 = new THREE.MeshBasicMaterial({ color: 0xffff44, transparent: true, opacity: 0.9 });
+        const flash2 = new THREE.Mesh(flashGeo2, flashMat2);
+        flash2.position.set(0, 0, -0.1);
+        flash2.visible = false;
+        gunGroup2.add(flash2);
+        this.muzzleFlashMesh2 = flash2;
+    }
+
     // Play a smaller gunshot sound (from NPC position, quieter)
     playStripperGunshot() {
         const now = Date.now();
@@ -259,15 +299,19 @@ class Stripper {
     shootAtTarget(target, targetType) {
         if (!target || !target.alive) return;
 
-        this.shootCooldown = this.shootInterval;
+        // Faster shooting from car (drive-by!)
+        this.shootCooldown = this.inCar ? this.shootInterval * 0.6 : this.shootInterval;
 
         // Play gunshot sound
         this.playStripperGunshot();
 
-        // Muzzle flash
+        // Muzzle flash (both guns if upgraded)
         if (this.muzzleFlashMesh) {
             this.muzzleFlashMesh.visible = true;
             this.muzzleFlashTimer = 0.06;
+        }
+        if (this.upgraded && this.muzzleFlashMesh2) {
+            this.muzzleFlashMesh2.visible = true;
         }
 
         // Face the target
@@ -277,9 +321,18 @@ class Stripper {
             this.mesh.rotation.y = Math.atan2(toTarget.x, toTarget.z);
         }
 
-        // Create bullet tracer from stripper to target
+        // Create bullet tracer - offset from car window when in car
         const start = this.position.clone();
-        start.y += 0.9; // gun height
+        if (this.inCar && this.carRef) {
+            // Shoot from the side window of the car
+            const sideOffset = Math.cos(this.carRef.rotation) * 1.5;
+            const sideOffsetZ = -Math.sin(this.carRef.rotation) * 1.5;
+            start.x += sideOffset;
+            start.z += sideOffsetZ;
+            start.y = this.carRef.position.y + 1.4; // Window height
+        } else {
+            start.y += 0.9; // gun height
+        }
         const end = target.position.clone();
         end.y += 0.7; // center mass
 
@@ -368,61 +421,92 @@ class Stripper {
         }
     }
 
-    // Combat AI - find and shoot enemies when player is fighting
+    // Combat AI - find and shoot enemies autonomously and when player is fighting
     updateCombat(dt) {
-        if (!this.armed || !this.hired || this.inCar) return;
+        if (!this.armed || !this.hired) return;
 
         this.shootCooldown = Math.max(0, this.shootCooldown - dt);
 
         // Update muzzle flash
         if (this.muzzleFlashTimer > 0) {
             this.muzzleFlashTimer -= dt;
-            if (this.muzzleFlashTimer <= 0 && this.muzzleFlashMesh) {
-                this.muzzleFlashMesh.visible = false;
+            if (this.muzzleFlashTimer <= 0) {
+                if (this.muzzleFlashMesh) this.muzzleFlashMesh.visible = false;
+                if (this.muzzleFlashMesh2) this.muzzleFlashMesh2.visible = false;
             }
-        }
-
-        // Check if player is in combat (recently shot at crackheads or cops)
-        if (!this.glockRef) return;
-        const now = Date.now() / 1000;
-        const timeSincePlayerShot = now - this.glockRef.lastTargetTime;
-        if (timeSincePlayerShot > this.glockRef.combatTimeout || !this.glockRef.lastTargetType) {
-            this.currentTarget = null;
-            return;
         }
 
         // Ready to shoot?
         if (this.shootCooldown > 0) return;
 
-        const targetType = this.glockRef.lastTargetType;
+        // Extended range and faster shooting when in car (drive-by!)
+        const effectiveRange = this.inCar ? this.shootRange * 2 : this.shootRange;
 
-        // Find nearest enemy of the type the player is fighting
         let bestTarget = null;
         let bestDist = Infinity;
+        let bestTargetType = null;
 
-        if (targetType === 'crackhead' && this.crackheadSpawner) {
-            for (const ch of this.crackheadSpawner.crackheads) {
-                if (!ch.alive) continue;
-                const dist = ch.position.distanceTo(this.position);
-                if (dist < this.shootRange && dist < bestDist) {
-                    bestDist = dist;
-                    bestTarget = ch;
-                }
-            }
-        } else if (targetType === 'cop' && this.copSpawner) {
-            for (const cop of this.copSpawner.cops) {
-                if (!cop.alive) continue;
-                const dist = cop.position.distanceTo(this.position);
-                if (dist < this.shootRange && dist < bestDist) {
-                    bestDist = dist;
-                    bestTarget = cop;
+        // Priority 1: Assist player's current combat target (whatever they're shooting at)
+        if (this.glockRef) {
+            const now = Date.now() / 1000;
+            const timeSincePlayerShot = now - this.glockRef.lastTargetTime;
+            if (timeSincePlayerShot <= this.glockRef.combatTimeout && this.glockRef.lastTargetType) {
+                const targetType = this.glockRef.lastTargetType;
+                if (targetType === 'crackhead' && this.crackheadSpawner) {
+                    for (const ch of this.crackheadSpawner.crackheads) {
+                        if (!ch.alive) continue;
+                        const dist = ch.position.distanceTo(this.position);
+                        if (dist < effectiveRange && dist < bestDist) {
+                            bestDist = dist;
+                            bestTarget = ch;
+                            bestTargetType = 'crackhead';
+                        }
+                    }
+                } else if (targetType === 'cop' && this.copSpawner) {
+                    for (const cop of this.copSpawner.cops) {
+                        if (!cop.alive) continue;
+                        const dist = cop.position.distanceTo(this.position);
+                        if (dist < effectiveRange && dist < bestDist) {
+                            bestDist = dist;
+                            bestTarget = cop;
+                            bestTargetType = 'cop';
+                        }
+                    }
                 }
             }
         }
 
-        if (bestTarget) {
+        // Priority 2: Auto-target cops when player has 2+ wanted stars
+        if (!bestTarget && this.copSpawner && this.copSpawner.wantedLevel >= 2) {
+            for (const cop of this.copSpawner.cops) {
+                if (!cop.alive) continue;
+                const dist = cop.position.distanceTo(this.position);
+                if (dist < effectiveRange && dist < bestDist) {
+                    bestDist = dist;
+                    bestTarget = cop;
+                    bestTargetType = 'cop';
+                }
+            }
+        }
+
+        // Priority 3: Always auto-target crackheads (they're hostile muggers)
+        if (!bestTarget && this.crackheadSpawner) {
+            for (const ch of this.crackheadSpawner.crackheads) {
+                if (!ch.alive) continue;
+                const dist = ch.position.distanceTo(this.position);
+                if (dist < effectiveRange && dist < bestDist) {
+                    bestDist = dist;
+                    bestTarget = ch;
+                    bestTargetType = 'crackhead';
+                }
+            }
+        }
+
+        if (bestTarget && bestTargetType) {
             this.currentTarget = bestTarget;
-            this.shootAtTarget(bestTarget, targetType);
+            this.shootAtTarget(bestTarget, bestTargetType);
+        } else {
+            this.currentTarget = null;
         }
     }
 
@@ -474,7 +558,16 @@ class Stripper {
 
     update(dt, playerPos) {
         if (!this.alive) return;
-        if (this.inCar) return; // Skip update when riding in the car
+        if (this.inCar) {
+            // While in the car, sync position to car for combat range checks
+            // and run combat AI so armed strippers can do drive-by shooting
+            if (this.carRef) {
+                this.position.copy(this.carRef.position);
+                this.position.y += 1.3; // Window height
+            }
+            this.updateCombat(dt);
+            return;
+        }
 
         const distToPlayer = this.position.distanceTo(playerPos);
         this.dancePhase += dt * 3;
@@ -533,6 +626,40 @@ class Stripper {
             toPlayer.y = 0;
             if (toPlayer.length() > 0.1) {
                 this.mesh.rotation.y = Math.atan2(toPlayer.x, toPlayer.z);
+            }
+
+            // Line-of-fire avoidance: hired strippers move out of the player's aim
+            if (this.hired && this.cameraRef && !this.inWater) {
+                // Get player's look direction (horizontal only)
+                const lookDir = new THREE.Vector3(0, 0, -1);
+                lookDir.applyQuaternion(this.cameraRef.getWorldQuaternion(new THREE.Quaternion()));
+                lookDir.y = 0;
+                lookDir.normalize();
+
+                // Vector from player to this stripper (horizontal)
+                const playerToMe = new THREE.Vector3().subVectors(this.position, playerPos);
+                playerToMe.y = 0;
+                const distHoriz = playerToMe.length();
+
+                if (distHoriz > 0.1) {
+                    playerToMe.normalize();
+                    // Dot product: how much the stripper is in front of the player
+                    const dot = lookDir.dot(playerToMe);
+                    // Cross product Y: which side the stripper is on
+                    const cross = lookDir.x * playerToMe.z - lookDir.z * playerToMe.x;
+
+                    // If stripper is in a narrow cone in front of the player (dot > 0.7 means ~45 degree cone)
+                    if (dot > 0.7 && distHoriz < 4.0) {
+                        // Move perpendicular to the look direction (to the side)
+                        // Choose the side the stripper is already leaning toward
+                        const sideSign = cross >= 0 ? 1 : -1;
+                        const perpX = -lookDir.z * sideSign;
+                        const perpZ = lookDir.x * sideSign;
+                        const dodgeSpeed = effectiveSpeed * 1.5;
+                        this.velocity.x = perpX * dodgeSpeed;
+                        this.velocity.z = perpZ * dodgeSpeed;
+                    }
+                }
             }
         } else {
             this.attracted = false;

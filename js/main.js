@@ -6,6 +6,7 @@
     let scene, camera, renderer;
     let world, player, input, ui, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner;
     let healthPotionSpawner;
+    let liquorStoreSpawner;
     let glock;
     let challenger; // Pimp Dodge Challenger
     let clock;
@@ -15,6 +16,8 @@
     let mKeyWasDown = false;
     let rKeyWasDown = false;
     let uKeyWasDown = false;
+    let bKeyWasDown = false;
+    let shopMenuOpen = false;
     let drivingMode = false;
     let moneySpreadMode = false; // Third-person money spread on foot
     let smoothCamPos = null; // For smooth camera follow
@@ -116,6 +119,12 @@
         healthPotionSpawner = new HealthPotionSpawner(world, scene);
         healthPotionSpawner.stripperSpawner = stripperSpawner;
         healthPotionSpawner.player = player;
+
+        // Spawn crypto liquor store system
+        liquorStoreSpawner = new LiquorStoreSpawner(world, scene);
+        liquorStoreSpawner.player = player;
+        liquorStoreSpawner.glock = glock;
+        liquorStoreSpawner.stripperSpawner = stripperSpawner;
 
         // Spawn the pimp Dodge Challenger on the nearest road
         spawnChallenger();
@@ -224,6 +233,9 @@
             
             // Update health potions (Mango Cart Ale pickups)
             if (healthPotionSpawner) healthPotionSpawner.update(dt, challenger.position);
+
+            // Update liquor stores while driving
+            if (liquorStoreSpawner) liquorStoreSpawner.update(dt, challenger.position);
             
             // === CHECK CAR-NPC COLLISIONS (roadkill!) ===
             checkCarNPCCollisions(dt);
@@ -315,6 +327,36 @@
 
             // Update health potions (Mango Cart Ale pickups)
             if (healthPotionSpawner) healthPotionSpawner.update(dt, player.position);
+
+            // Update liquor stores on foot
+            if (liquorStoreSpawner) liquorStoreSpawner.update(dt, player.position);
+        }
+
+        // === B KEY: Open/Close Crypto Liquor Store Shop ===
+        const bKeyDown = input.keys['KeyB'];
+        if (bKeyDown && !bKeyWasDown) {
+            if (shopMenuOpen) {
+                closeShopMenu();
+            } else if (!drivingMode) {
+                // Try to open shop if near a store
+                if (liquorStoreSpawner) {
+                    const store = liquorStoreSpawner.getNearestShoppableStore(player.position);
+                    if (store) {
+                        openShopMenu(store);
+                    }
+                }
+            }
+        }
+        bKeyWasDown = bKeyDown;
+
+        // === SHOP MENU: Handle number key purchases ===
+        if (shopMenuOpen && !drivingMode) {
+            handleShopInput();
+        }
+
+        // === ESC to close shop ===
+        if (shopMenuOpen && input.keys['Escape']) {
+            closeShopMenu();
         }
 
         // === HIGH EFFECT: check proximity to bongmen ===
@@ -477,15 +519,11 @@
         player.drivingCar = challenger;
         challenger.enter();
         
-        // Auto-board any hired strippers that are nearby (they get back in for free)
+        // Auto-board ALL hired strippers (they teleport into the car no matter how far)
         if (stripperSpawner) {
-            const HIRED_BOARD_RANGE = 15; // Hired strippers within this range auto-board
             for (const s of stripperSpawner.strippers) {
                 if (!s.alive || s.inCar || !s.hired) continue;
-                const dist = s.position.distanceTo(challenger.position);
-                if (dist < HIRED_BOARD_RANGE) {
-                    challenger.addPassenger(s); // addPassenger already sets inCar=true, hired=true
-                }
+                challenger.addPassenger(s); // addPassenger already sets inCar=true, hired=true
             }
         }
         
@@ -610,14 +648,21 @@
         if (passengerDisplay) {
             const count = challenger.getPassengerCount();
             const armed = challenger.getArmedPassengerCount();
-            const unarmed = challenger.getUnarmedPassengerCount();
+            const upgraded = challenger.getUpgradedPassengerCount();
+            const upgradeable = challenger.getUpgradeablePassengerCount();
             const money = glock ? glock.money : 0;
             if (count > 0) {
                 passengerDisplay.style.display = 'block';
                 let text = `💃 ${count} stripper${count > 1 ? 's' : ''}`;
-                if (armed > 0) text += ` (🔫${armed})`;
+                if (upgraded > 0 && upgradeable > 0) {
+                    text += ` (🔫${armed - upgraded} | 🔫🔫${upgraded})`;
+                } else if (upgraded > 0) {
+                    text += ` (🔫🔫${upgraded})`;
+                } else {
+                    text += ` (🔫${armed})`;
+                }
                 text += ` | 💵 $${money}`;
-                if (unarmed > 0) text += ` | U to arm 🔫 $100`;
+                if (upgradeable > 0) text += ` | U to upgrade 🔫🔫 $100`;
                 passengerDisplay.textContent = text;
                 passengerDisplay.style.color = '#FFD700';
             } else {
@@ -669,6 +714,16 @@
         // Stripper squeals excitedly and gets in
         nearestStripper.playSqueal();
         challenger.addPassenger(nearestStripper);
+
+        // Wire up references for hired stripper (combat + line-of-fire avoidance)
+        nearestStripper.crackheadSpawner = crackheadSpawner;
+        nearestStripper.copSpawner = copSpawner;
+        nearestStripper.glockRef = glock;
+        nearestStripper.playerRef = player;
+        nearestStripper.cameraRef = camera;
+
+        // Auto-equip with a glock when invited
+        nearestStripper.equipGlock();
 
         // Show success message
         showInviteMessage(challenger.getPassengerCount());
@@ -750,15 +805,15 @@
     function upgradeStripperInCar() {
         if (!challenger || !drivingMode || !glock) return;
 
-        // Check if there are any unarmed passengers
-        if (challenger.getUnarmedPassengerCount() <= 0) {
+        // Check if there are any upgradeable passengers (armed but not dual glocks yet)
+        if (challenger.getUpgradeablePassengerCount() <= 0) {
             // No one to upgrade
             const brokeMsg = document.getElementById('broke-message');
             if (brokeMsg) {
                 if (challenger.getPassengerCount() <= 0) {
                     brokeMsg.textContent = '🤷 No strippers in car! 🤷';
                 } else {
-                    brokeMsg.textContent = '🔫 All strippers already strapped! 🔫';
+                    brokeMsg.textContent = '🔫🔫 All strippers maxed out! 🔫🔫';
                 }
                 brokeMsg.classList.remove('active');
                 brokeMsg.style.display = 'none';
@@ -780,14 +835,9 @@
             return;
         }
 
-        // Upgrade the first unarmed passenger
+        // Upgrade the first upgradeable passenger to dual glocks
         const upgraded = challenger.upgradePassenger();
         if (!upgraded) return;
-
-        // Wire up combat references so she can find targets
-        upgraded.crackheadSpawner = crackheadSpawner;
-        upgraded.copSpawner = copSpawner;
-        upgraded.glockRef = glock;
 
         // Deduct money
         glock.money -= STRIPPER_ARM_COST;
@@ -802,11 +852,11 @@
         if (!inviteMsg) return;
 
         const messages = [
-            '💃🔫 She\'s strapped! -$100 💸',
-            '🔥🔫 Armed & dangerous! -$100 💸',
-            '💋🔫 She got the glock! -$100 💸',
-            '😈🔫 Ride or die! -$100 💸',
-            '💃🔫 Locked & loaded! -$100 💸'
+            '💃🔫🔫 DUAL GLOCKS! -$100 💸',
+            '🔥🔫🔫 Double strapped! -$100 💸',
+            '💋🔫🔫 Gold glock upgrade! -$100 💸',
+            '😈🔫🔫 Akimbo mode! -$100 💸',
+            '💃🔫🔫 Twice the firepower! -$100 💸'
         ];
         inviteMsg.textContent = messages[Math.floor(Math.random() * messages.length)];
 

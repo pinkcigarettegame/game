@@ -87,6 +87,7 @@ class DodgeChallenger {
     addPassenger(stripper) {
         stripper.inCar = true;
         stripper.hired = true; // Mark as hired - she's been paid for
+        stripper.carRef = this; // Give her a reference to the car for drive-by shooting
         stripper.mesh.visible = false;
         this.passengers.push(stripper);
     }
@@ -98,6 +99,7 @@ class DodgeChallenger {
             const s = this.passengers[i];
             if (!s.alive) continue;
             s.inCar = false;
+            s.carRef = null; // Clear car reference
             s.mesh.visible = true;
             // Place them near the player's exit position (not randomly around the car)
             const angle = (i / Math.max(1, this.passengers.length)) * Math.PI * 2;
@@ -111,22 +113,31 @@ class DodgeChallenger {
         this.passengers = [];
     }
 
-    // Upgrade a passenger with a glock - returns the upgraded stripper or null
+    // Upgrade a passenger's glock to dual glocks - returns the upgraded stripper or null
     upgradePassenger() {
         for (const s of this.passengers) {
-            if (s.alive && !s.armed) {
-                s.equipGlock();
+            if (s.alive && s.armed && !s.upgraded) {
+                s.upgradeGlock();
                 return s;
             }
         }
-        return null; // All passengers already armed or no passengers
+        return null; // All passengers already upgraded or no passengers
     }
 
-    // Get count of unarmed passengers
-    getUnarmedPassengerCount() {
+    // Get count of passengers that can be upgraded (armed but not yet upgraded)
+    getUpgradeablePassengerCount() {
         let count = 0;
         for (const s of this.passengers) {
-            if (s.alive && !s.armed) count++;
+            if (s.alive && s.armed && !s.upgraded) count++;
+        }
+        return count;
+    }
+
+    // Get count of upgraded passengers (dual glocks)
+    getUpgradedPassengerCount() {
+        let count = 0;
+        for (const s of this.passengers) {
+            if (s.alive && s.upgraded) count++;
         }
         return count;
     }

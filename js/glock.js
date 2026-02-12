@@ -333,6 +333,7 @@ class Glock {
             for (let i = this.stripperSpawner.strippers.length - 1; i >= 0; i--) {
                 const s = this.stripperSpawner.strippers[i];
                 if (!s.alive) continue;
+                if (s.hired) continue; // Can't kill hired strippers
                 const hit = this.checkRayHit(origin, direction, s.position, 0.4, 1.6);
                 if (hit) {
                     if (!s.health) s.health = 8;
