@@ -21,6 +21,7 @@ class Stripper {
         this.squealed = false;
         this.inCar = false; // Whether this stripper is riding in the car
         this.hired = false; // Whether this stripper has been paid for (stays with player)
+        this.collected = false; // Whether this stripper is in the player's collection (hidden)
         this.carRef = null; // Reference to the car when riding in it
 
         // Armed combat system
@@ -568,6 +569,12 @@ class Stripper {
             this.updateCombat(dt);
             return;
         }
+        // Collected strippers are hidden - skip all physics/movement
+        if (this.collected) {
+            // Just keep position near player so they don't despawn
+            this.position.copy(playerPos);
+            return;
+        }
 
         const distToPlayer = this.position.distanceTo(playerPos);
         this.dancePhase += dt * 3;
@@ -797,8 +804,8 @@ class StripperSpawner {
         for (let i = this.strippers.length - 1; i >= 0; i--) {
             const s = this.strippers[i];
             s.update(dt, playerPos);
-            // Don't despawn strippers that are riding in the car or have been hired
-            if (!s.inCar && !s.hired && s.position.distanceTo(playerPos) > 100) {
+            // Don't despawn strippers that are riding in the car, hired, or collected
+            if (!s.inCar && !s.hired && !s.collected && s.position.distanceTo(playerPos) > 100) {
                 s.dispose();
                 this.strippers.splice(i, 1);
             }

@@ -98,6 +98,16 @@ class UI {
         const glockStatus = glock && glock.equipped ? '🔫 GLOCK EQUIPPED' : '🔫 Press G for Glock';
         const moneyDisplay = glock ? `💵 $${glock.money}${glock.money > 0 ? ' (M to flex)' : ''}` : '';
         const swimStatus = this.player.inWater ? (this.player.headUnderwater ? '🏊 UNDERWATER' : '🌊 Swimming') : '';
+        
+        // Count collected strippers (your hooker collection)
+        let collectedCount = 0;
+        if (stripperSpawner) {
+            for (const s of stripperSpawner.strippers) {
+                if (s.alive && (s.collected || s.inCar)) collectedCount++;
+            }
+        }
+        const collectionDisplay = collectedCount > 0 ? `👑 Collection: ${collectedCount} 💃 (M to show off)` : '';
+        
         this.debugInfo.innerHTML = 
             `FPS: ${this.lastFps}<br>` +
             `XYZ: ${pos.x.toFixed(1)} / ${pos.y.toFixed(1)} / ${pos.z.toFixed(1)}<br>` +
@@ -111,6 +121,7 @@ class UI {
             `🤪 Crackheads: ${crackheadCount}<br>` +
             `${glockStatus}<br>` +
             `${moneyDisplay}<br>` +
+            (collectionDisplay ? `${collectionDisplay}<br>` : '') +
             `Seed: ${this.world.seed}`;
     }
 }

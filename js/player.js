@@ -52,6 +52,9 @@ class Player {
         this.moneySpreadCamAngle = 0;
         this.moneySpreadBills3D = [];
 
+        // Reference to stripper spawner for showing collection during money spread
+        this.stripperSpawnerRef = null;
+
         // Third-person character model (hidden in first person)
         this.characterMesh = this.createCharacterModel();
         this.characterMesh.visible = false;
@@ -215,6 +218,20 @@ class Player {
 
         // Hide block highlight
         this.highlightMesh.visible = false;
+
+        // Show collected strippers in a circle around the player
+        this._moneySpreadStrippers = [];
+        if (this.stripperSpawnerRef) {
+            const playerFeetY = this.position.y - this.fullHeight;
+            let idx = 0;
+            for (const s of this.stripperSpawnerRef.strippers) {
+                if (!s.alive || !s.collected) continue;
+                s.mesh.visible = true;
+                s.dancePhase = Math.random() * Math.PI * 2; // Random dance start
+                this._moneySpreadStrippers.push(s);
+                idx++;
+            }
+        }
     }
 
     // Update the money spread animation each frame (called from main.js)
@@ -309,6 +326,41 @@ class Player {
             this.position.z
         );
 
+        // === Animate collected strippers dancing in a circle ===
+        if (this._moneySpreadStrippers && this._moneySpreadStrippers.length > 0) {
+            const count = this._moneySpreadStrippers.length;
+            const circleRadius = 2.5 + count * 0.3; // Bigger circle with more strippers
+            const playerFeetY = this.position.y - this.fullHeight;
+            const orbitSpeed = 0.8; // How fast they orbit
+
+            for (let i = 0; i < count; i++) {
+                const s = this._moneySpreadStrippers[i];
+                if (!s.alive) continue;
+
+                // Position in circle around player, slowly orbiting
+                const baseAngle = (i / count) * Math.PI * 2;
+                const orbitAngle = baseAngle + t * orbitSpeed;
+                const sx = this.position.x + Math.cos(orbitAngle) * circleRadius;
+                const sz = this.position.z + Math.sin(orbitAngle) * circleRadius;
+
+                s.position.set(sx, playerFeetY, sz);
+                s.mesh.position.set(sx, playerFeetY, sz);
+
+                // Face the player (inward)
+                s.mesh.rotation.y = Math.atan2(
+                    this.position.x - sx,
+                    this.position.z - sz
+                );
+
+                // Dance animation - bounce and sway
+                s.dancePhase += dt * 4;
+                const bounce = Math.abs(Math.sin(s.dancePhase * 1.5)) * 0.08;
+                const sway = Math.sin(s.dancePhase) * 0.06;
+                s.mesh.position.y += bounce;
+                s.mesh.rotation.z = sway;
+            }
+        }
+
         return true; // Still active
     }
 
@@ -356,6 +408,17 @@ class Player {
 
     endMoneySpread(scene) {
         this.moneySpreadActive = false;
+
+        // Hide collected strippers again
+        if (this._moneySpreadStrippers) {
+            for (const s of this._moneySpreadStrippers) {
+                if (s.alive && s.collected) {
+                    s.mesh.visible = false;
+                    s.mesh.rotation.z = 0;
+                }
+            }
+            this._moneySpreadStrippers = [];
+        }
 
         // Hide character model
         this.characterMesh.visible = false;

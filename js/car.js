@@ -92,23 +92,21 @@ class DodgeChallenger {
         this.passengers.push(stripper);
     }
 
-    // Release all passengers when exiting - they stay hired and follow the player
+    // Release all passengers when exiting - they become part of the player's collection
+    // Strippers stay hidden (collected) and only appear during money spread
     releasePassengers(exitPos) {
-        const releaseCenter = exitPos || this.position;
         for (let i = 0; i < this.passengers.length; i++) {
             const s = this.passengers[i];
             if (!s.alive) continue;
             s.inCar = false;
-            s.carRef = null; // Clear car reference
-            s.mesh.visible = true;
-            // Place them near the player's exit position (not randomly around the car)
-            const angle = (i / Math.max(1, this.passengers.length)) * Math.PI * 2;
-            const dist = 2 + Math.random() * 1.5;
-            s.position.x = releaseCenter.x + Math.cos(angle) * dist;
-            s.position.z = releaseCenter.z + Math.sin(angle) * dist;
-            s.position.y = this.world.getSpawnHeight(s.position.x, s.position.z) + 0.5;
-            s.mesh.position.copy(s.position);
-            // They stay hired = true, so they'll keep following the player
+            s.carRef = null;
+            s.collected = true; // Mark as collected - part of the pimp's stable
+            s.mesh.visible = false; // Stay hidden until money spread
+            s.velocity.set(0, 0, 0);
+            // Position near player but hidden
+            if (exitPos) {
+                s.position.copy(exitPos);
+            }
         }
         this.passengers = [];
     }

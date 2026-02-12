@@ -2,12 +2,14 @@
 // Part A: LiquorStore class and building construction
 
 class LiquorStore {
-    constructor(scene, world, x, y, z) {
+    constructor(scene, world, x, y, z, rotation) {
         this.scene = scene;
         this.world = world;
         this.position = new THREE.Vector3(x, y, z);
+        this.rotation = rotation || 0; // Rotation in radians (0 = front faces +Z, PI/2 = front faces +X, etc.)
         this.group = new THREE.Group();
         this.group.position.set(x, y, z);
+        this.group.rotation.y = this.rotation;
         this.alive = true;
         this.shopOpen = false;
         this.glowPhase = Math.random() * Math.PI * 2;
@@ -19,10 +21,214 @@ class LiquorStore {
         this.depth = 8;
         this.wallHeight = 6;
 
+        this.clearArea();
+        this.createParkingLot();
         this.createBuilding();
         this.createSigns();
         this.createInterior();
         this.scene.add(this.group);
+    }
+
+    clearArea() {
+        // Clear all blocks (cigarettes, trees, crack pipes, etc.) around the store
+        // and flatten the terrain to create a clean parking lot area
+        // Handles rotation: the "front" (+Z local) faces the road
+        const wx = Math.floor(this.position.x);
+        const wy = Math.floor(this.position.y);
+        const wz = Math.floor(this.position.z);
+        const rot = this.rotation;
+        const cosR = Math.cos(rot);
+        const sinR = Math.sin(rot);
+
+        // Clear a large area around the store (in local coords):
+        // Local X: -9 to +9 (building width + margin)
+        // Local Z: -7 to +17 (building depth + parking lot + margin)
+        for (let lx = -9; lx <= 9; lx++) {
+            for (let lz = -7; lz <= 17; lz++) {
+                // Rotate local coords to world coords
+                const bx = wx + Math.round(lx * cosR + lz * sinR);
+                const bz = wz + Math.round(-lx * sinR + lz * cosR);
+                const groundY = wy - 1;
+
+                // Fill below to ensure solid ground
+                for (let by = groundY - 3; by <= groundY; by++) {
+                    if (by >= 0) {
+                        this.world.setBlock(bx, by, bz, BlockType.STONE);
+                    }
+                }
+
+                // Clear everything above ground level - nuke all cigarettes, smoke, pipes, etc.
+                for (let by = groundY + 1; by < groundY + 25; by++) {
+                    this.world.setBlock(bx, by, bz, BlockType.AIR);
+                }
+
+                // Set the surface block based on local position
+                const inBuilding = (lx >= -5 && lx <= 5 && lz >= -4 && lz <= 4);
+                const inParkingLot = (lz > 5 && lz <= 16);
+
+                if (inParkingLot) {
+                    this.world.setBlock(bx, groundY, bz, BlockType.ROAD_ASPHALT);
+                } else {
+                    this.world.setBlock(bx, groundY, bz, BlockType.STONE);
+                }
+            }
+        }
+    }
+
+    createParkingLot() {
+        // Parking lot visual elements (Three.js meshes added to the group)
+        // The parking lot is in front of the building (+Z direction)
+        const lotWidth = 14;
+        const lotDepth = 10;
+        const lotCenterZ = this.depth / 2 + lotDepth / 2 + 1; // In front of building
+
+        // === ASPHALT SURFACE (dark gray plane) ===
+        const asphaltGeo = new THREE.BoxGeometry(lotWidth, 0.12, lotDepth);
+        const asphaltMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+        const asphalt = new THREE.Mesh(asphaltGeo, asphaltMat);
+        asphalt.position.set(0, 0.06, lotCenterZ);
+        this.group.add(asphalt);
+
+        // === SIDEWALK CURB (between building and lot) ===
+        const curbGeo = new THREE.BoxGeometry(lotWidth + 2, 0.25, 1.2);
+        const curbMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+        const curb = new THREE.Mesh(curbGeo, curbMat);
+        curb.position.set(0, 0.12, this.depth / 2 + 1.1);
+        this.group.add(curb);
+
+        // === PARKING LINE STRIPES (yellow) ===
+        const stripeMat = new THREE.MeshBasicMaterial({ color: 0xffdd00 });
+        const numSpaces = 5;
+        const spaceWidth = lotWidth / numSpaces;
+
+        for (let i = 0; i <= numSpaces; i++) {
+            const sx = -lotWidth / 2 + i * spaceWidth;
+            // Vertical stripe (perpendicular to building)
+            const stripeGeo = new THREE.BoxGeometry(0.15, 0.13, lotDepth * 0.6);
+            const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+            stripe.position.set(sx, 0.13, lotCenterZ - 0.5);
+            this.group.add(stripe);
+        }
+
+        // Horizontal line at back of parking spaces (near building)
+        const backLineGeo = new THREE.BoxGeometry(lotWidth, 0.13, 0.15);
+        const backLine = new THREE.Mesh(backLineGeo, stripeMat);
+        backLine.position.set(0, 0.13, lotCenterZ - lotDepth * 0.3 - 0.5);
+        this.group.add(backLine);
+
+        // Horizontal line at front of parking spaces
+        const frontLineGeo = new THREE.BoxGeometry(lotWidth, 0.13, 0.15);
+        const frontLine = new THREE.Mesh(frontLineGeo, stripeMat);
+        frontLine.position.set(0, 0.13, lotCenterZ + lotDepth * 0.3 - 0.5);
+        this.group.add(frontLine);
+
+        // === HANDICAP SYMBOL in first space (blue) ===
+        const handicapCanvas = document.createElement('canvas');
+        handicapCanvas.width = 32;
+        handicapCanvas.height = 32;
+        const hCtx = handicapCanvas.getContext('2d');
+        hCtx.fillStyle = '#0044cc';
+        hCtx.fillRect(0, 0, 32, 32);
+        hCtx.font = 'bold 22px Arial';
+        hCtx.textAlign = 'center';
+        hCtx.textBaseline = 'middle';
+        hCtx.fillStyle = '#ffffff';
+        hCtx.fillText('♿', 16, 17);
+        const handicapTexture = new THREE.CanvasTexture(handicapCanvas);
+        const handicapMat = new THREE.MeshBasicMaterial({ map: handicapTexture });
+        const handicapGeo = new THREE.BoxGeometry(spaceWidth * 0.6, 0.13, spaceWidth * 0.6);
+        const handicapSign = new THREE.Mesh(handicapGeo, handicapMat);
+        handicapSign.position.set(-lotWidth / 2 + spaceWidth / 2, 0.13, lotCenterZ);
+        this.group.add(handicapSign);
+
+        // === PARKING BOLLARDS (short yellow posts at edges) ===
+        const bollardGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3);
+        const bollardMat = new THREE.MeshLambertMaterial({ color: 0xffcc00 });
+        const bollardPositions = [
+            [-lotWidth / 2 - 0.5, 0.4, lotCenterZ - lotDepth / 2 + 0.5],
+            [lotWidth / 2 + 0.5, 0.4, lotCenterZ - lotDepth / 2 + 0.5],
+            [-lotWidth / 2 - 0.5, 0.4, lotCenterZ + lotDepth / 2 - 0.5],
+            [lotWidth / 2 + 0.5, 0.4, lotCenterZ + lotDepth / 2 - 0.5],
+        ];
+        for (const bp of bollardPositions) {
+            const bollard = new THREE.Mesh(bollardGeo, bollardMat);
+            bollard.position.set(bp[0], bp[1], bp[2]);
+            this.group.add(bollard);
+
+            // Reflective stripe on bollard
+            const reflGeo = new THREE.BoxGeometry(0.32, 0.15, 0.32);
+            const reflMat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+            const refl = new THREE.Mesh(reflGeo, reflMat);
+            refl.position.set(bp[0], bp[1] + 0.2, bp[2]);
+            this.group.add(refl);
+        }
+
+        // === LIGHT POLES (tall with light on top) ===
+        const poleMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+        const polePositions = [
+            [-lotWidth / 2 + 1, lotCenterZ],
+            [lotWidth / 2 - 1, lotCenterZ],
+        ];
+        for (const pp of polePositions) {
+            // Pole
+            const poleGeo = new THREE.BoxGeometry(0.2, 5, 0.2);
+            const pole = new THREE.Mesh(poleGeo, poleMat);
+            pole.position.set(pp[0], 2.5, pp[1]);
+            this.group.add(pole);
+
+            // Light fixture (box on top)
+            const fixtureGeo = new THREE.BoxGeometry(0.8, 0.3, 0.8);
+            const fixtureMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+            const fixture = new THREE.Mesh(fixtureGeo, fixtureMat);
+            fixture.position.set(pp[0], 5.15, pp[1]);
+            this.group.add(fixture);
+
+            // Light bulb (glowing)
+            const bulbGeo = new THREE.BoxGeometry(0.6, 0.1, 0.6);
+            const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffffcc, transparent: true, opacity: 0.9 });
+            const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+            bulb.position.set(pp[0], 4.95, pp[1]);
+            this.group.add(bulb);
+            this.neonObjects.push(bulb);
+
+            // Point light from pole
+            const poleLight = new THREE.PointLight(0xffffcc, 0.6, 12);
+            poleLight.position.set(pp[0], 4.8, pp[1]);
+            this.group.add(poleLight);
+        }
+
+        // === "CUSTOMER PARKING ONLY" sign ===
+        const signCanvas = document.createElement('canvas');
+        signCanvas.width = 128;
+        signCanvas.height = 32;
+        const sCtx = signCanvas.getContext('2d');
+        sCtx.fillStyle = '#1a1a2e';
+        sCtx.fillRect(0, 0, 128, 32);
+        sCtx.strokeStyle = '#00ff88';
+        sCtx.lineWidth = 2;
+        sCtx.strokeRect(2, 2, 124, 28);
+        sCtx.font = 'bold 11px monospace';
+        sCtx.textAlign = 'center';
+        sCtx.fillStyle = '#00ff88';
+        sCtx.fillText('₿ HODLER PARKING', 64, 14);
+        sCtx.font = '9px monospace';
+        sCtx.fillStyle = '#ffd700';
+        sCtx.fillText('VIOLATORS WILL BE LIQUIDATED', 64, 26);
+
+        const signTexture = new THREE.CanvasTexture(signCanvas);
+        signTexture.minFilter = THREE.LinearFilter;
+        const signMat2 = new THREE.MeshBasicMaterial({ map: signTexture });
+        const signGeo2 = new THREE.PlaneGeometry(3, 0.75);
+        const parkingSign = new THREE.Mesh(signGeo2, signMat2);
+        parkingSign.position.set(lotWidth / 2 + 0.8, 2.5, lotCenterZ);
+        parkingSign.rotation.y = -Math.PI / 2;
+        this.group.add(parkingSign);
+
+        // Sign post
+        const signPostGeo = new THREE.BoxGeometry(0.15, 3, 0.15);
+        const signPost = new THREE.Mesh(signPostGeo, poleMat);
+        signPost.position.set(lotWidth / 2 + 0.8, 1.5, lotCenterZ);
+        this.group.add(signPost);
     }
 
     createBuilding() {
@@ -751,24 +957,83 @@ class LiquorStoreSpawner {
     }
 
     trySpawn(playerPos) {
-        // Try to find a spot near a road intersection ahead of the player
+        // Place stores flush with roads - parking lot faces the road
+        // Roads are at ROAD_SPACING intervals (128 blocks apart)
+        // Road half-width is 5 blocks (total 11 blocks wide)
         const ROAD_SPACING = 128;
+        const ROAD_HALF_WIDTH = 5;
+        const BUILDING_SETBACK = 14; // Distance from road center to building center (road edge + parking lot + half building)
 
-        // Find nearest intersection
-        const nearestIX = Math.round(playerPos.x / ROAD_SPACING) * ROAD_SPACING;
-        const nearestIZ = Math.round(playerPos.z / ROAD_SPACING) * ROAD_SPACING;
+        // Find nearest road grid lines
+        const nearestXRoad = Math.round(playerPos.x / ROAD_SPACING) * ROAD_SPACING; // Z-aligned road at this X
+        const nearestZRoad = Math.round(playerPos.z / ROAD_SPACING) * ROAD_SPACING; // X-aligned road at this Z
 
-        // Try several candidate positions near intersections
-        const candidates = [
-            { x: nearestIX + 12, z: nearestIZ + 12 },
-            { x: nearestIX - 12, z: nearestIZ + 12 },
-            { x: nearestIX + 12, z: nearestIZ - 12 },
-            { x: nearestIX - 12, z: nearestIZ - 12 },
-            { x: nearestIX + ROAD_SPACING + 12, z: nearestIZ + 12 },
-            { x: nearestIX + 12, z: nearestIZ + ROAD_SPACING + 12 },
-            { x: nearestIX - ROAD_SPACING - 12, z: nearestIZ - 12 },
-            { x: nearestIX - 12, z: nearestIZ - ROAD_SPACING - 12 },
-        ];
+        // Generate candidates: stores placed alongside roads, facing the road
+        // Each candidate has x, z, rotation
+        // rotation: 0 = front faces +Z, PI = front faces -Z, PI/2 = front faces +X, -PI/2 = front faces -X
+        const candidates = [];
+
+        // Along Z-aligned road (road runs along Z at x=nearestXRoad)
+        // Store on the +X side of road, facing -X toward road
+        const offsets = [-40, -20, 0, 20, 40];
+        for (const oz of offsets) {
+            // +X side: store center at road + setback, facing road (rotation = -PI/2, front faces -X)
+            candidates.push({
+                x: nearestXRoad + BUILDING_SETBACK,
+                z: nearestZRoad + oz,
+                rot: -Math.PI / 2
+            });
+            // -X side: store center at road - setback, facing road (rotation = PI/2, front faces +X)
+            candidates.push({
+                x: nearestXRoad - BUILDING_SETBACK,
+                z: nearestZRoad + oz,
+                rot: Math.PI / 2
+            });
+        }
+
+        // Along X-aligned road (road runs along X at z=nearestZRoad)
+        for (const ox of offsets) {
+            // +Z side: store center at road + setback, facing road (rotation = PI, front faces -Z)
+            candidates.push({
+                x: nearestXRoad + ox,
+                z: nearestZRoad + BUILDING_SETBACK,
+                rot: Math.PI
+            });
+            // -Z side: store center at road - setback, facing road (rotation = 0, front faces +Z)
+            candidates.push({
+                x: nearestXRoad + ox,
+                z: nearestZRoad - BUILDING_SETBACK,
+                rot: 0
+            });
+        }
+
+        // Also check adjacent road grid cells
+        for (const roadOff of [ROAD_SPACING, -ROAD_SPACING]) {
+            for (const oz of [0, 20, -20]) {
+                candidates.push({
+                    x: nearestXRoad + roadOff + BUILDING_SETBACK,
+                    z: nearestZRoad + oz,
+                    rot: -Math.PI / 2
+                });
+                candidates.push({
+                    x: nearestXRoad + roadOff - BUILDING_SETBACK,
+                    z: nearestZRoad + oz,
+                    rot: Math.PI / 2
+                });
+            }
+            for (const ox of [0, 20, -20]) {
+                candidates.push({
+                    x: nearestXRoad + ox,
+                    z: nearestZRoad + roadOff + BUILDING_SETBACK,
+                    rot: Math.PI
+                });
+                candidates.push({
+                    x: nearestXRoad + ox,
+                    z: nearestZRoad + roadOff - BUILDING_SETBACK,
+                    rot: 0
+                });
+            }
+        }
 
         // Shuffle candidates
         for (let i = candidates.length - 1; i > 0; i--) {
@@ -777,7 +1042,7 @@ class LiquorStoreSpawner {
         }
 
         for (const cand of candidates) {
-            const key = `${Math.round(cand.x / 10)},${Math.round(cand.z / 10)}`;
+            const key = `${Math.round(cand.x / 8)},${Math.round(cand.z / 8)}`;
             if (this.checkedPositions.has(key)) continue;
             this.checkedPositions.add(key);
 
@@ -785,7 +1050,7 @@ class LiquorStoreSpawner {
             const dx = cand.x - playerPos.x;
             const dz = cand.z - playerPos.z;
             const dist = Math.sqrt(dx * dx + dz * dz);
-            if (dist < 20 || dist > 100) continue;
+            if (dist < 25 || dist > 100) continue;
 
             // Check distance from existing stores (don't cluster)
             let tooClose = false;
@@ -806,8 +1071,8 @@ class LiquorStoreSpawner {
             const groundBlock = this.world.getBlock(Math.floor(cand.x), sy - 1, Math.floor(cand.z));
             if (groundBlock === BlockType.AIR || groundBlock === BlockType.WATER) continue;
 
-            // Spawn the store!
-            const store = new LiquorStore(this.scene, this.world, cand.x, sy, cand.z);
+            // Spawn the store flush with the road!
+            const store = new LiquorStore(this.scene, this.world, cand.x, sy, cand.z, cand.rot);
             this.stores.push(store);
             return;
         }

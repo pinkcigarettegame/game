@@ -120,6 +120,9 @@
         healthPotionSpawner.stripperSpawner = stripperSpawner;
         healthPotionSpawner.player = player;
 
+        // Give player a reference to stripper spawner for money spread collection display
+        player.stripperSpawnerRef = stripperSpawner;
+
         // Spawn crypto liquor store system
         liquorStoreSpawner = new LiquorStoreSpawner(world, scene);
         liquorStoreSpawner.player = player;
@@ -519,11 +522,13 @@
         player.drivingCar = challenger;
         challenger.enter();
         
-        // Auto-board ALL hired strippers (they teleport into the car no matter how far)
+        // Auto-board ALL collected/hired strippers (they teleport into the car)
         if (stripperSpawner) {
             for (const s of stripperSpawner.strippers) {
-                if (!s.alive || s.inCar || !s.hired) continue;
-                challenger.addPassenger(s); // addPassenger already sets inCar=true, hired=true
+                if (!s.alive || s.inCar) continue;
+                if (!s.hired && !s.collected) continue; // Only board hired or collected strippers
+                s.collected = false; // No longer just collected - now actively in car
+                challenger.addPassenger(s); // addPassenger sets inCar=true, hired=true
             }
         }
         
@@ -984,7 +989,7 @@
         if (stripperSpawner && stripperSpawner.strippers) {
             for (let i = stripperSpawner.strippers.length - 1; i >= 0; i--) {
                 const s = stripperSpawner.strippers[i];
-                if (!s.alive || s.inCar || s.hired) continue;
+                if (!s.alive || s.inCar || s.hired || s.collected) continue;
                 if (challenger.isPointInCarBounds(s.position)) {
                     s.alive = false;
                     s.dispose();
@@ -1279,51 +1284,155 @@
         }, 2000);
     }
 
+    // === CRYPTO LIQUOR STORE SHOP MENU ===
+    let activeShopStore = null;
+    let shopKeyStates = { '1': false, '2': false, '3': false, '4': false };
+
+    function openShopMenu(store) {
+        if (shopMenuOpen) return;
+        shopMenuOpen = true;
+        activeShopStore = store;
+
+        const menu = document.getElementById('shop-menu');
+        if (!menu) return;
+
+        // Update balance
+        const balanceEl = document.getElementById('shop-balance-amount');
+        if (balanceEl && glock) {
+            balanceEl.textContent = glock.money;
+        }
+
+        // Populate items
+        const container = document.getElementById('shop-items-container');
+        if (container) {
+            container.innerHTML = '';
+            const items = LiquorStore.getMenuItems();
+            const money = glock ? glock.money : 0;
+
+            for (const item of items) {
+                const div = document.createElement('div');
+                div.className = 'shop-item' + (money < item.price ? ' cant-afford' : '');
+                div.innerHTML = `
+                    <span class="item-key">${item.key}</span>
+                    <span class="item-emoji">${item.emoji}</span>
+                    <div class="item-info">
+                        <div class="item-name">${item.name}</div>
+                        <div class="item-desc">${item.desc}</div>
+                    </div>
+                    <span class="item-price">$${item.price}</span>
+                `;
+                container.appendChild(div);
+            }
+        }
+
+        menu.style.display = 'block';
+
+        // Hide shop prompt while menu is open
+        const prompt = document.getElementById('shop-prompt');
+        if (prompt) prompt.style.display = 'none';
+
+        // Release pointer lock so cursor is visible
+        if (document.pointerLockElement) {
+            document.exitPointerLock();
+        }
+    }
+
+    function closeShopMenu() {
+        if (!shopMenuOpen) return;
+        shopMenuOpen = false;
+        activeShopStore = null;
+
+        const menu = document.getElementById('shop-menu');
+        if (menu) menu.style.display = 'none';
+
+        // Re-lock pointer
+        if (input) input.requestPointerLock();
+    }
+
+    function handleShopInput() {
+        if (!activeShopStore || !glock) return;
+
+        const keys = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
+        for (let i = 0; i < keys.length; i++) {
+            const keyDown = input.keys[keys[i]];
+            const keyName = String(i + 1);
+            if (keyDown && !shopKeyStates[keyName]) {
+                // Try to purchase
+                const success = activeShopStore.purchase(i, glock, player, stripperSpawner);
+
+                if (success) {
+                    // Check if moonshine (high effect)
+                    if (activeShopStore._lastPurchaseEffect === 'high') {
+                        highLevel = Math.min(1, highLevel + 0.6);
+                        activeShopStore._lastPurchaseEffect = null;
+                    }
+
+                    // Update the menu balance and item affordability
+                    const balanceEl = document.getElementById('shop-balance-amount');
+                    if (balanceEl) balanceEl.textContent = glock.money;
+
+                    const container = document.getElementById('shop-items-container');
+                    if (container) {
+                        const items = LiquorStore.getMenuItems();
+                        const itemDivs = container.querySelectorAll('.shop-item');
+                        itemDivs.forEach((div, idx) => {
+                            if (idx < items.length) {
+                                if (glock.money < items[idx].price) {
+                                    div.classList.add('cant-afford');
+                                } else {
+                                    div.classList.remove('cant-afford');
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    // Show broke message
+                    showBrokeMessage();
+                }
+            }
+            shopKeyStates[keyName] = !!keyDown;
+        }
+    }
+
     function spawnChallenger() {
-        // Find the nearest road to the player spawn (8, 8)
-        // Roads are on a grid with spacing of 48, so nearest roads are at x=0 and z=0
-        // Search nearby for a road surface block
-        const ROAD_SPACING = 48;
+        // Try to spawn the car in a liquor store parking lot first
+        if (liquorStoreSpawner && liquorStoreSpawner.stores.length > 0) {
+            const store = liquorStoreSpawner.stores[0];
+            // Park in the parking lot (in front of the store, in local +Z direction)
+            const parkingDist = 10; // Distance from store center to parking spot
+            const cosR = Math.cos(store.rotation);
+            const sinR = Math.sin(store.rotation);
+            // Local parking spot is at (0, 0, parkingDist) rotated by store rotation
+            const carX = store.position.x + parkingDist * sinR;
+            const carZ = store.position.z + parkingDist * cosR;
+            const carY = store.position.y;
+            // Car faces along the road (perpendicular to store front)
+            const carRotation = store.rotation + Math.PI / 2;
+            challenger = new DodgeChallenger(scene, world, carX, carY, carZ, carRotation);
+            return;
+        }
+
+        // Fallback: spawn on nearest road
+        const ROAD_SPACING = 128;
         const spawnX = player.position.x;
         const spawnZ = player.position.z;
         
-        // Find nearest road center (round to nearest road grid line)
         const nearestRoadX = Math.round(spawnX / ROAD_SPACING) * ROAD_SPACING;
         const nearestRoadZ = Math.round(spawnZ / ROAD_SPACING) * ROAD_SPACING;
         
-        // Try placing on the Z-aligned road (runs along Z axis at nearestRoadX)
-        // Place it a few blocks ahead of the player along the road
         let carX = nearestRoadX;
-        let carZ = spawnZ + 5; // A bit ahead of spawn
-        
-        // If the nearest road is too far, try the other axis
-        if (Math.abs(nearestRoadX - spawnX) > 15) {
-            // Try Z-road instead
-            carX = spawnX + 5;
-            carZ = nearestRoadZ;
-        }
-        
-        // Get the ground height at the car position
-        const carY = world.getSpawnHeight(carX, carZ);
-        
-        // Determine road direction for car rotation
-        // If on X-road (road runs along X), car faces along X (rotation = PI/2)
-        // If on Z-road (road runs along Z), car faces along Z (rotation = 0)
+        let carZ = spawnZ + 5;
         let carRotation = 0;
+        
         if (Math.abs(nearestRoadX - spawnX) <= Math.abs(nearestRoadZ - spawnZ)) {
-            // Closer to a Z-aligned road - car faces along Z
             carX = nearestRoadX;
             carRotation = 0;
         } else {
-            // Closer to an X-aligned road - car faces along X
             carZ = nearestRoadZ;
             carRotation = Math.PI / 2;
         }
         
-        // Recalculate height at final position
         const finalY = world.getSpawnHeight(carX, carZ);
-        
-        // Create the pimp Challenger!
         challenger = new DodgeChallenger(scene, world, carX, finalY, carZ, carRotation);
     }
 
