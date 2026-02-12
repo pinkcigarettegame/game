@@ -543,6 +543,18 @@
                 if (!s.hired && !s.collected) continue; // Only board hired or collected strippers
                 s.collected = false; // No longer just collected - now actively in car
                 challenger.addPassenger(s); // addPassenger sets inCar=true, hired=true
+                
+                // Wire up combat references so strippers can shoot from the car
+                s.crackheadSpawner = crackheadSpawner;
+                s.copSpawner = copSpawner;
+                s.glockRef = glock;
+                s.playerRef = player;
+                s.cameraRef = camera;
+                
+                // Auto-equip with a glock if not already armed
+                if (!s.armed) {
+                    s.equipGlock();
+                }
             }
         }
         
