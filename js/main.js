@@ -11,6 +11,11 @@
     let challenger; // Pimp Dodge Challenger
     let clock;
     let gameStarted = false;
+    
+    // Multiplayer
+    let mp = null; // Multiplayer instance
+    let remoteRenderer = null; // Remote player renderer
+    let playerName = 'Player';
     let gKeyWasDown = false;
     let hKeyWasDown = false;
     let mKeyWasDown = false;
@@ -101,6 +106,10 @@
         if (gameStarted) return;
         gameStarted = true;
 
+        // Get player name from input
+        const nameInput = document.getElementById('player-name-input');
+        playerName = (nameInput && nameInput.value.trim()) || 'Player' + Math.floor(Math.random() * 999);
+
         input.requestPointerLock();
         
         // Generate initial chunks and spawn player
@@ -147,9 +156,111 @@
         // Spawn the pimp Dodge Challenger in the parking lot
         spawnChallenger();
 
+        // === INITIALIZE MULTIPLAYER ===
+        initMultiplayer();
+
         ui.show();
         
+        // Show multiplayer HUD
+        const mpHud = document.getElementById('mp-hud');
+        if (mpHud) mpHud.style.display = 'block';
+        
         clock.start();
+    }
+
+    // === MULTIPLAYER SYSTEM ===
+    function initMultiplayer() {
+        mp = new Multiplayer();
+        remoteRenderer = new RemotePlayerRenderer(scene);
+        
+        // Set up callbacks
+        mp.onPlayerJoin = function(peerId, name) {
+            console.log('[GAME] Player joined:', name);
+            remoteRenderer.addPlayer(peerId, name);
+            showMPMessage('🟢 ' + name + ' joined the world!', '#44ff88');
+            updateMPPlayerCount();
+        };
+        
+        mp.onPlayerLeave = function(peerId, name) {
+            console.log('[GAME] Player left:', name);
+            remoteRenderer.removePlayer(peerId);
+            showMPMessage('🔴 ' + name + ' left the world', '#ff6666');
+            updateMPPlayerCount();
+        };
+        
+        mp.onPlayerUpdate = function(peerId, data) {
+            remoteRenderer.updatePlayerData(peerId, data);
+            // Update lastMoveTime for timeout detection
+            if (remoteRenderer.players[peerId]) {
+                remoteRenderer.players[peerId].lastMoveTime = Date.now();
+            }
+        };
+        
+        mp.onBlockChange = function(x, y, z, blockType) {
+            // Apply block change from remote player
+            world.setBlock(x, y, z, blockType);
+        };
+        
+        mp.onConnectionStatus = function(state, message) {
+            const statusEl = document.getElementById('mp-connection-status');
+            const startStatusEl = document.getElementById('mp-status');
+            if (statusEl) {
+                statusEl.textContent = message;
+                switch(state) {
+                    case 'host': statusEl.style.color = '#ffaa00'; break;
+                    case 'connected': statusEl.style.color = '#44ff88'; break;
+                    case 'connecting': statusEl.style.color = '#ffff44'; break;
+                    case 'reconnecting': statusEl.style.color = '#ffaa44'; break;
+                    case 'error': statusEl.style.color = '#ff4444'; break;
+                    default: statusEl.style.color = '#888888';
+                }
+            }
+            if (startStatusEl) {
+                startStatusEl.textContent = '🌐 ' + message;
+            }
+            updateMPPlayerCount();
+        };
+        
+        // Expose mp globally so player.js can broadcast block changes
+        window.mp = mp;
+        
+        // Start multiplayer connection
+        mp.init(playerName);
+    }
+    
+    function updateMPPlayerCount() {
+        const countEl = document.getElementById('mp-player-count');
+        if (!countEl || !mp) return;
+        const count = mp.getPlayerCount();
+        countEl.textContent = '👥 ' + count + ' player' + (count !== 1 ? 's' : '');
+        if (mp.isHost) {
+            countEl.textContent += ' ⭐';
+        }
+    }
+    
+    function showMPMessage(text, color) {
+        const container = document.getElementById('mp-messages');
+        if (!container) return;
+        
+        const msg = document.createElement('div');
+        msg.textContent = text;
+        msg.style.cssText = 'color:' + (color || '#ffffff') + '; padding:4px 8px; background:rgba(0,0,0,0.6); ' +
+            'border-radius:4px; margin-bottom:4px; text-shadow:1px 1px 2px rgba(0,0,0,0.8); ' +
+            'transition:opacity 0.5s; opacity:1;';
+        container.appendChild(msg);
+        
+        // Fade out and remove after 5 seconds
+        setTimeout(() => {
+            msg.style.opacity = '0';
+            setTimeout(() => {
+                if (msg.parentNode) msg.parentNode.removeChild(msg);
+            }, 500);
+        }, 5000);
+        
+        // Keep max 5 messages
+        while (container.children.length > 5) {
+            container.removeChild(container.firstChild);
+        }
     }
 
     function onPointerLockChange() {
@@ -386,6 +497,23 @@
 
         // === UNDERWATER EFFECT ===
         updateUnderwaterEffect(dt);
+
+        // === MULTIPLAYER UPDATE ===
+        if (mp && mp.connected) {
+            // Broadcast local player position
+            mp.broadcastPosition(
+                player.position,
+                { x: camera.rotation.x, y: camera.rotation.y },
+                player.health,
+                drivingMode,
+                glock ? glock.equipped : false
+            );
+        }
+        
+        // Update remote player rendering
+        if (remoteRenderer) {
+            remoteRenderer.update(dt, camera.position);
+        }
 
         // Render
         renderer.render(scene, camera);

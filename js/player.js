@@ -837,6 +837,10 @@ class Player {
 
         if (hit) {
             this.world.setBlock(hit.position.x, hit.position.y, hit.position.z, BlockType.AIR);
+            // Broadcast block break to multiplayer
+            if (window.mp && window.mp.connected) {
+                window.mp.broadcastBlockChange(hit.position.x, hit.position.y, hit.position.z, BlockType.AIR);
+            }
         }
     }
 
@@ -860,6 +864,10 @@ class Player {
             }
 
             this.world.setBlock(hit.previous.x, hit.previous.y, hit.previous.z, blockType);
+            // Broadcast block place to multiplayer
+            if (window.mp && window.mp.connected) {
+                window.mp.broadcastBlockChange(hit.previous.x, hit.previous.y, hit.previous.z, blockType);
+            }
         }
     }
 }

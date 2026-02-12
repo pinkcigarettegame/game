@@ -68,10 +68,11 @@ class Chunk {
                 centerZ = wz;
             }
             
-            // Very wide averaging window (±96 blocks, step 12) for ultra-smooth height
+            // Very wide averaging window for ultra-smooth road height
+            // Use ±192 blocks, step 8 for maximum smoothness (fewer cliff-like jumps)
             let sumH = 0;
             let count = 0;
-            for (let s = -96; s <= 96; s += 12) {
+            for (let s = -192; s <= 192; s += 8) {
                 let sx, sz;
                 if (onZRoad || nearZRoad) {
                     sx = wx + s;
@@ -84,7 +85,8 @@ class Chunk {
                 // Account for flatness biome in road height calculation
                 const sFlatness = Math.max(0, Math.min(1, (noise.noise2D(sx * 0.003 + 500, sz * 0.003 + 500) + 1) * 0.5));
                 const sMountainScale = 1.0 - sFlatness * 0.88;
-                let h = noise.noise2D(sx * 0.005, sz * 0.005) * 12 * sMountainScale + 28;
+                // Reduced amplitude (6 instead of 12) for gentler slopes
+                let h = noise.noise2D(sx * 0.003, sz * 0.003) * 6 * sMountainScale + 28;
                 h = Math.max(WATER_LEVEL + 3, h);
                 sumH += h;
                 count++;
@@ -528,10 +530,13 @@ class Chunk {
     }
 }
 
+// Fixed world seed so all multiplayer clients generate identical terrain
+const WORLD_SEED = 42069;
+
 class World {
     constructor(scene, seed) {
         this.scene = scene;
-        this.seed = seed || Math.floor(Math.random() * 65536);
+        this.seed = seed || WORLD_SEED;
         this.noise = new SimplexNoise(this.seed);
         this.chunks = {};
         this.blockTextures = new BlockTextures();
@@ -671,6 +676,100 @@ class World {
     isOnRoad(wx, wy, wz) {
         const block = this.getBlock(Math.floor(wx), Math.floor(wy), Math.floor(wz));
         return this.isRoadBlock(block);
+    }
+
+    // Get the road surface height at a given world position
+    // Returns the road height if on/near a road, or null if not near a road
+    getRoadSurfaceHeight(wx, wz) {
+        // Replicate the road height calculation from Chunk.getRoadInfo
+        const ROAD_SPACING = 128;
+        const ROAD_WIDTH = 5;
+        const ROAD_SMOOTH = 3;
+
+        // Z-aligned road
+        const xRoadBase = Math.round(wx / ROAD_SPACING) * ROAD_SPACING;
+        const xRoadOffset = this.noise.noise2D(xRoadBase * 0.1, wz * 0.005) * 4;
+        const xRoadCenter = xRoadBase + xRoadOffset;
+        const distFromXRoad = Math.abs(wx - xRoadCenter);
+
+        // X-aligned road
+        const zRoadBase = Math.round(wz / ROAD_SPACING) * ROAD_SPACING;
+        const zRoadOffset = this.noise.noise2D(wx * 0.005, zRoadBase * 0.1) * 4;
+        const zRoadCenter = zRoadBase + zRoadOffset;
+        const distFromZRoad = Math.abs(wz - zRoadCenter);
+
+        const onZRoad = distFromZRoad <= ROAD_WIDTH;
+        const onXRoad = distFromXRoad <= ROAD_WIDTH;
+        const nearZRoad = distFromZRoad <= ROAD_WIDTH + ROAD_SMOOTH;
+        const nearXRoad = distFromXRoad <= ROAD_WIDTH + ROAD_SMOOTH;
+
+        if (!onZRoad && !onXRoad && !nearZRoad && !nearXRoad) return null;
+
+        // Calculate road height using the same wide averaging as chunk generation
+        let centerX, centerZ;
+        let isZAligned = false; // true = road runs along Z axis (spaced along X)
+        if (onZRoad || nearZRoad) {
+            centerX = wx;
+            centerZ = zRoadCenter;
+        } else {
+            centerX = xRoadCenter;
+            centerZ = wz;
+            isZAligned = true;
+        }
+
+        let sumH = 0;
+        let count = 0;
+        for (let s = -192; s <= 192; s += 8) {
+            let sx, sz;
+            if (!isZAligned) {
+                sx = wx + s;
+                sz = zRoadCenter;
+            } else {
+                sx = xRoadCenter;
+                sz = wz + s;
+            }
+            const sFlatness = Math.max(0, Math.min(1, (this.noise.noise2D(sx * 0.003 + 500, sz * 0.003 + 500) + 1) * 0.5));
+            const sMountainScale = 1.0 - sFlatness * 0.88;
+            let h = this.noise.noise2D(sx * 0.003, sz * 0.003) * 6 * sMountainScale + 28;
+            h = Math.max(WATER_LEVEL + 3, h);
+            sumH += h;
+            count++;
+        }
+        let roadHeight = Math.round(sumH / count);
+        roadHeight = Math.max(WATER_LEVEL + 3, roadHeight);
+
+        return roadHeight;
+    }
+
+    // Get the road edge position and height for a given world position
+    // Used by liquor store to find the nearest road edge
+    getNearestRoadEdgeHeight(wx, wz) {
+        const ROAD_SPACING = 128;
+        const ROAD_WIDTH = 5;
+
+        // Find nearest Z-aligned road (runs along Z, spaced along X)
+        const xRoadBase = Math.round(wx / ROAD_SPACING) * ROAD_SPACING;
+        const xRoadOffset = this.noise.noise2D(xRoadBase * 0.1, wz * 0.005) * 4;
+        const xRoadCenter = xRoadBase + xRoadOffset;
+        const distFromXRoad = Math.abs(wx - xRoadCenter);
+
+        // Find nearest X-aligned road (runs along X, spaced along Z)
+        const zRoadBase = Math.round(wz / ROAD_SPACING) * ROAD_SPACING;
+        const zRoadOffset = this.noise.noise2D(wx * 0.005, zRoadBase * 0.1) * 4;
+        const zRoadCenter = zRoadBase + zRoadOffset;
+        const distFromZRoad = Math.abs(wz - zRoadCenter);
+
+        // Return the height of the nearest road
+        let roadHeight;
+        if (distFromXRoad < distFromZRoad) {
+            // Nearest road is Z-aligned at xRoadCenter
+            roadHeight = this.getRoadSurfaceHeight(xRoadCenter, wz);
+        } else {
+            // Nearest road is X-aligned at zRoadCenter
+            roadHeight = this.getRoadSurfaceHeight(wx, zRoadCenter);
+        }
+
+        return roadHeight;
     }
 
     // Animate water textures (UV scrolling for wave effect)

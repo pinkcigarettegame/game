@@ -21,6 +21,29 @@ class DodgeChallenger {
         this.maxSteer = 2.5;      // Max steering rate (rad/sec)
         this.wheelBase = 3.0;     // Distance between axles for turning
         
+        // Vertical physics / suspension
+        this.verticalVelocity = 0;
+        this.groundY = y;           // Current ground level
+        this.onGround = true;
+        this.suspensionStiffness = 45;  // Spring stiffness (softer for smoother ride)
+        this.suspensionDamping = 10;    // Damping factor
+        this.gravity = -30;
+        
+        // Tilt (pitch & roll)
+        this.pitch = 0;              // Current pitch angle (rotation.x)
+        this.roll = 0;               // Current roll angle (rotation.z)
+        this.targetPitch = 0;
+        this.targetRoll = 0;
+        this.tiltSmoothing = 5;      // How fast tilt interpolates (slower = less jitter)
+        
+        // Wheel positions in local space (relative to car center)
+        this.wheelOffsets = {
+            frontLeft:  { x: -1.05, z: -1.5 },
+            frontRight: { x:  1.05, z: -1.5 },
+            rearLeft:   { x: -1.05, z:  1.5 },
+            rearRight:  { x:  1.05, z:  1.5 }
+        };
+        
         // Camera
         this.cameraDistance = 10;  // Distance behind car
         this.cameraHeight = 5;    // Height above car
@@ -154,6 +177,55 @@ class DodgeChallenger {
         return this.passengers.length;
     }
 
+    // Get world-space position of a wheel given its local offset
+    getWheelWorldPos(localX, localZ) {
+        const cosR = Math.cos(this.rotation);
+        const sinR = Math.sin(this.rotation);
+        // Rotate local offset by car's Y rotation
+        const wx = this.position.x + localX * cosR - localZ * sinR;
+        const wz = this.position.z + localX * sinR + localZ * cosR;
+        return { x: wx, z: wz };
+    }
+
+    // Sample ground height at all 4 wheels and compute average, pitch, and roll
+    sampleWheelHeights() {
+        const wo = this.wheelOffsets;
+        
+        const fl = this.getWheelWorldPos(wo.frontLeft.x, wo.frontLeft.z);
+        const fr = this.getWheelWorldPos(wo.frontRight.x, wo.frontRight.z);
+        const rl = this.getWheelWorldPos(wo.rearLeft.x, wo.rearLeft.z);
+        const rr = this.getWheelWorldPos(wo.rearRight.x, wo.rearRight.z);
+        
+        const hFL = this.world.getSpawnHeight(fl.x, fl.z);
+        const hFR = this.world.getSpawnHeight(fr.x, fr.z);
+        const hRL = this.world.getSpawnHeight(rl.x, rl.z);
+        const hRR = this.world.getSpawnHeight(rr.x, rr.z);
+        
+        // Average height of all 4 wheels
+        const avgHeight = (hFL + hFR + hRL + hRR) / 4;
+        
+        // Pitch: difference between front and rear (positive = nose up)
+        // Front wheels are at -Z in local space, rear at +Z
+        const frontAvg = (hFL + hFR) / 2;
+        const rearAvg = (hRL + hRR) / 2;
+        const wheelBaseZ = Math.abs(wo.frontLeft.z - wo.rearLeft.z); // 3.0
+        const pitchAngle = Math.atan2(rearAvg - frontAvg, wheelBaseZ);
+        
+        // Roll: difference between left and right (positive = left side up)
+        const leftAvg = (hFL + hRL) / 2;
+        const rightAvg = (hFR + hRR) / 2;
+        const wheelBaseX = Math.abs(wo.frontLeft.x - wo.frontRight.x); // 2.1
+        const rollAngle = Math.atan2(leftAvg - rightAvg, wheelBaseX);
+        
+        return {
+            avgHeight: avgHeight,
+            pitch: pitchAngle,
+            roll: rollAngle,
+            maxHeight: Math.max(hFL, hFR, hRL, hRR),
+            minHeight: Math.min(hFL, hFR, hRL, hRR)
+        };
+    }
+
     // Update car physics when being driven
     updateDriving(dt, input) {
         if (!this.occupied) return;
@@ -221,13 +293,102 @@ class DodgeChallenger {
         this.position.x += moveX;
         this.position.z += moveZ;
 
-        // Keep car on ground
-        const groundY = this.world.getSpawnHeight(this.position.x, this.position.z);
-        this.position.y = groundY;
+        // === TERRAIN-AWARE GROUND FOLLOWING WITH TILT ===
+        
+        // Sample ground at all 4 wheel positions
+        const wheelData = this.sampleWheelHeights();
+        // Use the higher of average or (max - 0.5) to prevent clipping through ledges
+        this.groundY = Math.max(wheelData.avgHeight, wheelData.maxHeight - 0.5);
+        
+        // Vertical physics (suspension spring)
+        const groundTarget = this.groundY;
+        const heightDiff = groundTarget - this.position.y;
+        
+        if (this.position.y < groundTarget) {
+            // Below ground - push up immediately (don't clip through terrain)
+            this.position.y = groundTarget;
+            if (this.verticalVelocity < 0) {
+                // Landing impact - bounce proportional to impact speed
+                const impactSpeed = Math.abs(this.verticalVelocity);
+                if (impactSpeed > 3) {
+                    // Small bounce on hard landing
+                    this.verticalVelocity = impactSpeed * 0.15;
+                } else {
+                    this.verticalVelocity = 0;
+                }
+            }
+            this.onGround = true;
+        } else if (heightDiff > -0.3) {
+            // Close to ground - apply suspension spring force
+            const springForce = this.suspensionStiffness * heightDiff;
+            const dampingForce = -this.suspensionDamping * this.verticalVelocity;
+            this.verticalVelocity += (springForce + dampingForce) * dt;
+            this.position.y += this.verticalVelocity * dt;
+            this.onGround = true;
+            
+            // Prevent sinking below ground
+            if (this.position.y < groundTarget) {
+                this.position.y = groundTarget;
+                if (this.verticalVelocity < 0) this.verticalVelocity = 0;
+            }
+        } else {
+            // Airborne - apply gravity
+            this.verticalVelocity += this.gravity * dt;
+            this.position.y += this.verticalVelocity * dt;
+            this.onGround = false;
+            
+            // Clamp to ground if we overshoot
+            if (this.position.y < groundTarget) {
+                this.position.y = groundTarget;
+                const impactSpeed = Math.abs(this.verticalVelocity);
+                if (impactSpeed > 3) {
+                    this.verticalVelocity = impactSpeed * 0.15;
+                } else {
+                    this.verticalVelocity = 0;
+                }
+                this.onGround = true;
+            }
+        }
+        
+        // Slope effect on speed (slight slowdown uphill, speedup downhill)
+        if (this.onGround && Math.abs(this.speed) > 0.5) {
+            const slopeEffect = Math.sin(wheelData.pitch) * 5.0 * dt;
+            // When pitch > 0 (nose up = going uphill), slow down
+            // When pitch < 0 (nose down = going downhill), speed up
+            if (this.speed > 0) {
+                this.speed -= slopeEffect;
+            } else {
+                this.speed += slopeEffect;
+            }
+        }
+        
+        // === TILT INTERPOLATION ===
+        // Set target pitch and roll from terrain
+        this.targetPitch = wheelData.pitch;
+        this.targetRoll = wheelData.roll;
+        
+        // Clamp max tilt angles to prevent crazy flipping
+        const maxTiltAngle = 0.35; // ~20 degrees max
+        this.targetPitch = Math.max(-maxTiltAngle, Math.min(maxTiltAngle, this.targetPitch));
+        this.targetRoll = Math.max(-maxTiltAngle, Math.min(maxTiltAngle, this.targetRoll));
+        
+        // Smoothly interpolate current tilt toward target
+        const tiltLerp = Math.min(1, this.tiltSmoothing * dt);
+        this.pitch += (this.targetPitch - this.pitch) * tiltLerp;
+        this.roll += (this.targetRoll - this.roll) * tiltLerp;
+        
+        // When airborne, slowly level out
+        if (!this.onGround) {
+            this.pitch *= (1 - 0.5 * dt);
+            this.roll *= (1 - 0.5 * dt);
+        }
 
-        // Update mesh
+        // Update mesh position and rotation
         this.mesh.position.copy(this.position);
+        this.mesh.rotation.order = 'YXZ';
         this.mesh.rotation.y = this.rotation;
+        this.mesh.rotation.x = this.pitch;
+        this.mesh.rotation.z = this.roll;
     }
 
     // Get the ideal 3rd person camera position
@@ -235,7 +396,17 @@ class DodgeChallenger {
         // Camera behind and above the car
         const behindX = this.position.x + Math.sin(this.rotation) * this.cameraDistance;
         const behindZ = this.position.z + Math.cos(this.rotation) * this.cameraDistance;
-        const camY = this.position.y + this.cameraHeight;
+        let camY = this.position.y + this.cameraHeight;
+        
+        // Adjust camera height based on pitch - when going uphill, raise camera more
+        camY += Math.sin(this.pitch) * 2.0;
+        
+        // Ensure camera doesn't go below terrain
+        const terrainY = this.world.getSpawnHeight(behindX, behindZ);
+        if (camY < terrainY + 2) {
+            camY = terrainY + 2;
+        }
+        
         return new THREE.Vector3(behindX, camY, behindZ);
     }
 
@@ -243,7 +414,9 @@ class DodgeChallenger {
     getCameraTarget() {
         const aheadX = this.position.x - Math.sin(this.rotation) * this.cameraLookAhead;
         const aheadZ = this.position.z - Math.cos(this.rotation) * this.cameraLookAhead;
-        return new THREE.Vector3(aheadX, this.position.y + 1.2, aheadZ);
+        // Adjust look target height based on pitch for smoother hill transitions
+        const pitchOffset = Math.sin(this.pitch) * 0.8;
+        return new THREE.Vector3(aheadX, this.position.y + 1.2 + pitchOffset, aheadZ);
     }
 
     createMesh() {

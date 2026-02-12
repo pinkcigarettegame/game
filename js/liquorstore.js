@@ -21,6 +21,9 @@ class LiquorStore {
         this.depth = 8;
         this.wallHeight = 6;
 
+        // Calculate the road edge height so parking lot is flush with road
+        this.roadEdgeHeight = this.calculateRoadEdgeHeight();
+
         this.clearArea();
         this.createParkingLot();
         this.createBuilding();
@@ -29,10 +32,34 @@ class LiquorStore {
         this.scene.add(this.group);
     }
 
+    calculateRoadEdgeHeight() {
+        // Find the world position of the road edge (just past the parking lot)
+        // BUILDING_SETBACK=15, road half-width=5, so road edge is at local Z=10
+        const wx = Math.floor(this.position.x);
+        const wz = Math.floor(this.position.z);
+        const rot = this.rotation;
+        const cosR = Math.cos(rot);
+        const sinR = Math.sin(rot);
+
+        // Sample the road height at the road edge (local Z = 10)
+        const roadEdgeLocalZ = 10;
+        const roadEdgeWX = wx + Math.round(roadEdgeLocalZ * sinR);
+        const roadEdgeWZ = wz + Math.round(roadEdgeLocalZ * cosR);
+
+        // Use the world's road height calculation
+        const roadHeight = this.world.getNearestRoadEdgeHeight(roadEdgeWX, roadEdgeWZ);
+        if (roadHeight !== null && roadHeight !== undefined) {
+            return roadHeight;
+        }
+        // Fallback: use the store's own Y position
+        return Math.floor(this.position.y);
+    }
+
     clearArea() {
         // Clear all blocks (cigarettes, trees, crack pipes, etc.) around the store
         // and flatten the terrain to create a clean parking lot area
         // Handles rotation: the "front" (+Z local) faces the road
+        // The parking lot blends from the building height to the road height
         const wx = Math.floor(this.position.x);
         const wy = Math.floor(this.position.y);
         const wz = Math.floor(this.position.z);
@@ -40,32 +67,59 @@ class LiquorStore {
         const cosR = Math.cos(rot);
         const sinR = Math.sin(rot);
 
+        // Building ground level (Y of the surface block under the building)
+        const buildingGroundY = wy - 1;
+        // Road edge ground level (Y of the road surface)
+        const roadGroundY = this.roadEdgeHeight - 1;
+
+        // Parking lot zone: lz from 5 to 9 (stops before road edge)
+        // BUILDING_SETBACK=15, road half-width=5, so road edge is at local Z=10
+        const parkingStartZ = 5;
+        const parkingEndZ = 9; // Stop 1 block before road edge
+        const parkingRange = parkingEndZ - parkingStartZ; // 4 blocks
+
         // Clear a large area around the store (in local coords):
         // Local X: -9 to +9 (building width + margin)
-        // Local Z: -7 to +20 (building depth + parking lot extending to road)
+        // Local Z: -7 to +14 (building depth + parking lot, stopping before road)
+        // BUILDING_SETBACK is 15 from road center, road half-width is 5
+        // So road edge is at local Z = 15 - 5 = 10 from store center
+        // We stop the parking lot at local Z = 9 to avoid cutting into the road
+        const parkingMaxZ = 9; // Stop before road edge (road edge is ~10 blocks away)
         for (let lx = -9; lx <= 9; lx++) {
-            for (let lz = -7; lz <= 20; lz++) {
+            for (let lz = -7; lz <= parkingMaxZ; lz++) {
                 // Rotate local coords to world coords
                 const bx = wx + Math.round(lx * cosR + lz * sinR);
                 const bz = wz + Math.round(-lx * sinR + lz * cosR);
-                const groundY = wy - 1;
 
-                // Fill below to ensure solid ground
-                for (let by = groundY - 3; by <= groundY; by++) {
+                // Calculate the ground Y for this column, blending from building to road
+                let groundY;
+                const inParkingLot = (lz > parkingStartZ && lz <= parkingEndZ);
+
+                if (inParkingLot) {
+                    // Smoothly blend from building height to road height across the parking lot
+                    const t = (lz - parkingStartZ) / parkingRange; // 0 at building edge, 1 at road edge
+                    // Use smooth step for nicer transition
+                    const st = t * t * (3 - 2 * t);
+                    groundY = Math.round(buildingGroundY * (1 - st) + roadGroundY * st);
+                } else {
+                    groundY = buildingGroundY;
+                }
+
+                // Fill below to ensure solid ground (fill deeper to handle height differences)
+                const minY = Math.min(buildingGroundY, roadGroundY) - 4;
+                for (let by = minY; by <= groundY; by++) {
                     if (by >= 0) {
                         this.world.setBlock(bx, by, bz, BlockType.STONE);
                     }
                 }
 
                 // Clear everything above ground level - nuke all cigarettes, smoke, pipes, etc.
-                for (let by = groundY + 1; by < groundY + 25; by++) {
+                const maxClearY = Math.max(buildingGroundY, roadGroundY) + 25;
+                for (let by = groundY + 1; by < maxClearY; by++) {
                     this.world.setBlock(bx, by, bz, BlockType.AIR);
                 }
 
                 // Set the surface block based on local position
-                const inBuilding = (lx >= -5 && lx <= 5 && lz >= -4 && lz <= 4);
-                const inParkingLot = (lz > 5 && lz <= 20);
-
                 if (inParkingLot) {
                     this.world.setBlock(bx, groundY, bz, BlockType.ROAD_ASPHALT);
                 } else {
@@ -78,15 +132,27 @@ class LiquorStore {
     createParkingLot() {
         // Parking lot visual elements (Three.js meshes added to the group)
         // The parking lot is in front of the building (+Z direction)
+        // Parking lot stops at local Z=9 (1 block before road edge at Z=10)
+        // Building front is at local Z = depth/2 = 4, parking starts at ~Z=5
         const lotWidth = 14;
-        const lotDepth = 15; // Extended to reach the road
-        const lotCenterZ = this.depth / 2 + lotDepth / 2 + 1; // In front of building
+        const lotDepth = 5; // From building front to road edge (Z=4 to Z=9)
+        const lotCenterZ = this.depth / 2 + lotDepth / 2 + 0.5; // In front of building
 
-        // === ASPHALT SURFACE (dark gray plane) ===
+        // Height difference between building and road edge (in local Y space)
+        // The group is positioned at the store's position, so road edge Y offset is:
+        const roadYOffset = this.roadEdgeHeight - this.position.y;
+        // The parking lot center is halfway between building edge and road edge
+        const lotCenterYOffset = roadYOffset / 2;
+
+        // === ASPHALT SURFACE (tilted plane to match slope from building to road) ===
         const asphaltGeo = new THREE.BoxGeometry(lotWidth, 0.12, lotDepth);
         const asphaltMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
         const asphalt = new THREE.Mesh(asphaltGeo, asphaltMat);
-        asphalt.position.set(0, 0.06, lotCenterZ);
+        asphalt.position.set(0, 0.06 + lotCenterYOffset, lotCenterZ);
+        // Tilt the asphalt to slope from building to road
+        if (Math.abs(roadYOffset) > 0.1) {
+            asphalt.rotation.x = -Math.atan2(roadYOffset, lotDepth);
+        }
         this.group.add(asphalt);
 
         // === SIDEWALK CURB (between building and lot) ===
@@ -1066,13 +1132,32 @@ class LiquorStoreSpawner {
             }
             if (tooClose) continue;
 
-            // Get ground height
-            const sy = this.world.getSpawnHeight(cand.x, cand.z);
+            // Get road height at the parking lot edge to place store flush with road
+            // Calculate where the road edge would be for this candidate
+            // Road edge is at local Z=10 (BUILDING_SETBACK=15 minus ROAD_HALF_WIDTH=5)
+            const candCosR = Math.cos(cand.rot);
+            const candSinR = Math.sin(cand.rot);
+            const roadEdgeLocalZ = 10;
+            const roadEdgeWX = Math.floor(cand.x) + Math.round(roadEdgeLocalZ * candSinR);
+            const roadEdgeWZ = Math.floor(cand.z) + Math.round(roadEdgeLocalZ * candCosR);
+            const roadHeight = this.world.getNearestRoadEdgeHeight(roadEdgeWX, roadEdgeWZ);
+
+            // Use road height as the store's Y position so parking lot meets road flush
+            let sy;
+            if (roadHeight !== null && roadHeight !== undefined && roadHeight > WATER_LEVEL + 2) {
+                sy = roadHeight;
+            } else {
+                sy = this.world.getSpawnHeight(cand.x, cand.z);
+            }
             if (sy <= WATER_LEVEL + 2) continue;
 
-            // Check ground is solid
+            // Check ground is solid (at the store position or road position)
             const groundBlock = this.world.getBlock(Math.floor(cand.x), sy - 1, Math.floor(cand.z));
-            if (groundBlock === BlockType.AIR || groundBlock === BlockType.WATER) continue;
+            if (groundBlock === BlockType.AIR || groundBlock === BlockType.WATER) {
+                // Also try checking at road height
+                const altBlock = this.world.getBlock(Math.floor(cand.x), Math.max(0, sy - 2), Math.floor(cand.z));
+                if (altBlock === BlockType.AIR || altBlock === BlockType.WATER) continue;
+            }
 
             // Spawn the store flush with the road!
             const store = new LiquorStore(this.scene, this.world, cand.x, sy, cand.z, cand.rot);
@@ -1128,7 +1213,21 @@ class LiquorStoreSpawner {
         // Make sure terrain is loaded
         this.world.update(storeX, storeZ);
 
-        const sy = this.world.getSpawnHeight(storeX, storeZ);
+        // Use road height so parking lot is flush with road
+        // Road edge is at local Z=10 (BUILDING_SETBACK=15 minus road half-width=5)
+        const cosR = Math.cos(storeRot);
+        const sinR = Math.sin(storeRot);
+        const roadEdgeLocalZ = 10;
+        const roadEdgeWX = Math.floor(storeX) + Math.round(roadEdgeLocalZ * sinR);
+        const roadEdgeWZ = Math.floor(storeZ) + Math.round(roadEdgeLocalZ * cosR);
+        const roadHeight = this.world.getNearestRoadEdgeHeight(roadEdgeWX, roadEdgeWZ);
+
+        let sy;
+        if (roadHeight !== null && roadHeight !== undefined && roadHeight > WATER_LEVEL + 2) {
+            sy = roadHeight;
+        } else {
+            sy = this.world.getSpawnHeight(storeX, storeZ);
+        }
         const store = new LiquorStore(this.scene, this.world, storeX, sy, storeZ, storeRot);
         this.stores.push(store);
         return store;
