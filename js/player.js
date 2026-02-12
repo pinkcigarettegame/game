@@ -44,9 +44,344 @@ class Player {
         this.breakCooldown = 0;
         this.placeCooldown = 0;
 
+        // Money spread third-person state
+        this.moneySpreadActive = false;
+        this.moneySpreadTimer = 0;
+        this.moneySpreadDuration = 3.5; // seconds
+        this.moneySpreadSpinAngle = 0;
+        this.moneySpreadCamAngle = 0;
+        this.moneySpreadBills3D = [];
+
+        // Third-person character model (hidden in first person)
+        this.characterMesh = this.createCharacterModel();
+        this.characterMesh.visible = false;
+        this.world.scene.add(this.characterMesh);
+
         // Highlight box for targeted block
         this.highlightMesh = this.createHighlightMesh();
         this.world.scene.add(this.highlightMesh);
+    }
+
+    createCharacterModel() {
+        const group = new THREE.Group();
+
+        // === GANGSTA PLAYER CHARACTER - Pink Cigarette style ===
+
+        // Shoes (fresh Jordans - black/pink)
+        const shoeMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const shoeAccent = new THREE.MeshLambertMaterial({ color: 0xff44aa });
+        const shoeGeo = new THREE.BoxGeometry(0.18, 0.1, 0.28);
+        const leftShoe = new THREE.Mesh(shoeGeo, shoeMat);
+        leftShoe.position.set(-0.12, 0.05, 0.02);
+        group.add(leftShoe);
+        const rightShoe = new THREE.Mesh(shoeGeo, shoeMat);
+        rightShoe.position.set(0.12, 0.05, 0.02);
+        group.add(rightShoe);
+        // Shoe accents (pink swoosh)
+        const swooshGeo = new THREE.BoxGeometry(0.04, 0.04, 0.18);
+        const leftSwoosh = new THREE.Mesh(swooshGeo, shoeAccent);
+        leftSwoosh.position.set(-0.12, 0.06, 0.02);
+        group.add(leftSwoosh);
+        const rightSwoosh = new THREE.Mesh(swooshGeo, shoeAccent);
+        rightSwoosh.position.set(0.12, 0.06, 0.02);
+        group.add(rightSwoosh);
+
+        // Legs (baggy jeans - dark denim)
+        const jeansMat = new THREE.MeshLambertMaterial({ color: 0x1a1a3a });
+        const legGeo = new THREE.BoxGeometry(0.18, 0.5, 0.18);
+        const leftLeg = new THREE.Mesh(legGeo, jeansMat);
+        leftLeg.position.set(-0.12, 0.35, 0);
+        group.add(leftLeg);
+        const rightLeg = new THREE.Mesh(legGeo, jeansMat);
+        rightLeg.position.set(0.12, 0.35, 0);
+        group.add(rightLeg);
+
+        // Belt (gold chain belt)
+        const beltMat = new THREE.MeshBasicMaterial({ color: 0xFFD700 });
+        const beltGeo = new THREE.BoxGeometry(0.42, 0.06, 0.22);
+        const belt = new THREE.Mesh(beltGeo, beltMat);
+        belt.position.set(0, 0.63, 0);
+        group.add(belt);
+
+        // Torso (oversized pink hoodie)
+        const hoodieMat = new THREE.MeshLambertMaterial({ color: 0xff69b4 });
+        const torsoGeo = new THREE.BoxGeometry(0.42, 0.45, 0.24);
+        const torso = new THREE.Mesh(torsoGeo, hoodieMat);
+        torso.position.set(0, 0.9, 0);
+        group.add(torso);
+
+        // Gold chain necklace
+        const chainMat = new THREE.MeshBasicMaterial({ color: 0xFFD700 });
+        const chainGeo = new THREE.BoxGeometry(0.2, 0.04, 0.02);
+        const chain = new THREE.Mesh(chainGeo, chainMat);
+        chain.position.set(0, 1.05, 0.13);
+        group.add(chain);
+        // Chain pendant (dollar sign area)
+        const pendantGeo = new THREE.BoxGeometry(0.08, 0.1, 0.02);
+        const pendant = new THREE.Mesh(pendantGeo, chainMat);
+        pendant.position.set(0, 0.97, 0.13);
+        group.add(pendant);
+
+        // Arms (hoodie sleeves) - stored for animation
+        const armGeo = new THREE.BoxGeometry(0.14, 0.5, 0.14);
+        this._leftArm = new THREE.Mesh(armGeo, hoodieMat);
+        this._leftArm.position.set(-0.32, 0.88, 0);
+        group.add(this._leftArm);
+        this._rightArm = new THREE.Mesh(armGeo, hoodieMat);
+        this._rightArm.position.set(0.32, 0.88, 0);
+        group.add(this._rightArm);
+
+        // Hands (skin tone)
+        const skinMat = new THREE.MeshLambertMaterial({ color: 0xc68642 });
+        const handGeo = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        this._leftHand = new THREE.Mesh(handGeo, skinMat);
+        this._leftHand.position.set(-0.32, 0.58, 0);
+        group.add(this._leftHand);
+        this._rightHand = new THREE.Mesh(handGeo, skinMat);
+        this._rightHand.position.set(0.32, 0.58, 0);
+        group.add(this._rightHand);
+
+        // Head
+        const headGeo = new THREE.BoxGeometry(0.3, 0.3, 0.28);
+        const head = new THREE.Mesh(headGeo, skinMat);
+        head.position.set(0, 1.3, 0);
+        group.add(head);
+
+        // Sunglasses (dark, cool)
+        const glassesMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+        const glassGeo = new THREE.BoxGeometry(0.32, 0.08, 0.04);
+        const glasses = new THREE.Mesh(glassGeo, glassesMat);
+        glasses.position.set(0, 1.33, 0.14);
+        group.add(glasses);
+        // Lens shine
+        const shineMat = new THREE.MeshBasicMaterial({ color: 0x4444ff, transparent: true, opacity: 0.3 });
+        const shineGeo = new THREE.BoxGeometry(0.1, 0.05, 0.01);
+        const leftShine = new THREE.Mesh(shineGeo, shineMat);
+        leftShine.position.set(-0.07, 1.33, 0.165);
+        group.add(leftShine);
+        const rightShine = new THREE.Mesh(shineGeo, shineMat);
+        rightShine.position.set(0.07, 1.33, 0.165);
+        group.add(rightShine);
+
+        // Mouth (smirk)
+        const mouthMat = new THREE.MeshBasicMaterial({ color: 0x442222 });
+        const mouthGeo = new THREE.BoxGeometry(0.12, 0.03, 0.04);
+        const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+        mouth.position.set(0.02, 1.2, 0.14);
+        mouth.rotation.z = 0.1; // slight smirk angle
+        group.add(mouth);
+
+        // Durag / wave cap (dark purple)
+        const duragMat = new THREE.MeshLambertMaterial({ color: 0x440066 });
+        const duragGeo = new THREE.BoxGeometry(0.32, 0.12, 0.3);
+        const durag = new THREE.Mesh(duragGeo, duragMat);
+        durag.position.set(0, 1.47, -0.01);
+        group.add(durag);
+        // Durag tail (hanging back)
+        const tailGeo = new THREE.BoxGeometry(0.08, 0.04, 0.2);
+        const tail = new THREE.Mesh(tailGeo, duragMat);
+        tail.position.set(0, 1.42, -0.22);
+        group.add(tail);
+
+        // Gold rings on hands
+        const ringGeo = new THREE.BoxGeometry(0.04, 0.04, 0.04);
+        const leftRing = new THREE.Mesh(ringGeo, chainMat);
+        leftRing.position.set(-0.32, 0.56, 0.04);
+        group.add(leftRing);
+        const rightRing = new THREE.Mesh(ringGeo, chainMat);
+        rightRing.position.set(0.32, 0.56, 0.04);
+        group.add(rightRing);
+
+        return group;
+    }
+
+    // Start the money spread third-person animation
+    startMoneySpread() {
+        if (this.moneySpreadActive) return;
+        this.moneySpreadActive = true;
+        this.moneySpreadTimer = 0;
+        this.moneySpreadSpinAngle = this.rotation.y;
+        this.moneySpreadCamAngle = this.rotation.y + Math.PI; // Camera starts behind player
+        this.moneySpreadBills3D = [];
+
+        // Show character model
+        this.characterMesh.visible = true;
+        this.characterMesh.position.set(
+            this.position.x,
+            this.position.y - this.fullHeight,
+            this.position.z
+        );
+        this.characterMesh.rotation.y = this.rotation.y;
+
+        // Hide block highlight
+        this.highlightMesh.visible = false;
+    }
+
+    // Update the money spread animation each frame (called from main.js)
+    updateMoneySpread(dt, scene) {
+        if (!this.moneySpreadActive) return false;
+
+        this.moneySpreadTimer += dt;
+        const t = this.moneySpreadTimer;
+        const duration = this.moneySpreadDuration;
+        const progress = t / duration;
+
+        if (t >= duration) {
+            this.endMoneySpread(scene);
+            return false;
+        }
+
+        // === Character animation ===
+        // Slow gangsta spin
+        this.moneySpreadSpinAngle += dt * 1.8;
+        this.characterMesh.rotation.y = this.moneySpreadSpinAngle;
+
+        // Position character at player feet
+        this.characterMesh.position.set(
+            this.position.x,
+            this.position.y - this.fullHeight,
+            this.position.z
+        );
+
+        // Arms spread out and up (money fan pose)
+        if (this._leftArm && this._rightArm) {
+            const armSpread = Math.min(1, t * 3); // Quick spread
+            const armWave = Math.sin(t * 4) * 0.15;
+            // Left arm goes out and up
+            this._leftArm.rotation.z = armSpread * 1.2 + armWave;
+            this._leftArm.position.set(-0.32 - armSpread * 0.15, 0.88 + armSpread * 0.2, 0);
+            // Right arm goes out and up
+            this._rightArm.rotation.z = -(armSpread * 1.2 + armWave);
+            this._rightArm.position.set(0.32 + armSpread * 0.15, 0.88 + armSpread * 0.2, 0);
+            // Hands follow arms
+            if (this._leftHand && this._rightHand) {
+                this._leftHand.position.set(-0.32 - armSpread * 0.35, 0.58 + armSpread * 0.45, 0);
+                this._rightHand.position.set(0.32 + armSpread * 0.35, 0.58 + armSpread * 0.45, 0);
+            }
+        }
+
+        // === Spawn 3D dollar bills from hands ===
+        if (t > 0.3 && Math.random() < 0.4) {
+            this.spawn3DDollarBill(scene);
+        }
+
+        // === Update existing 3D bills ===
+        for (let i = this.moneySpreadBills3D.length - 1; i >= 0; i--) {
+            const bill = this.moneySpreadBills3D[i];
+            bill.life += dt;
+            bill.mesh.position.x += bill.vx * dt;
+            bill.mesh.position.y += bill.vy * dt;
+            bill.mesh.position.z += bill.vz * dt;
+            bill.vy -= 2.0 * dt; // gravity on bills
+            bill.mesh.rotation.x += bill.spinX * dt;
+            bill.mesh.rotation.y += bill.spinY * dt;
+            bill.mesh.rotation.z += bill.spinZ * dt;
+
+            // Flutter effect
+            bill.vx += Math.sin(bill.life * 5 + bill.phase) * 0.5 * dt;
+            bill.vz += Math.cos(bill.life * 4 + bill.phase) * 0.5 * dt;
+
+            // Fade out
+            if (bill.life > 2.0) {
+                bill.mesh.material.opacity = Math.max(0, 1 - (bill.life - 2.0) / 1.0);
+            }
+            if (bill.life > 3.0) {
+                scene.remove(bill.mesh);
+                bill.mesh.geometry.dispose();
+                bill.mesh.material.dispose();
+                this.moneySpreadBills3D.splice(i, 1);
+            }
+        }
+
+        // === Third-person camera ===
+        // Camera orbits slowly around the player
+        this.moneySpreadCamAngle += dt * 0.6;
+        const camDist = 5;
+        const camHeight = 2.5;
+        const camX = this.position.x + Math.sin(this.moneySpreadCamAngle) * camDist;
+        const camZ = this.position.z + Math.cos(this.moneySpreadCamAngle) * camDist;
+        const camY = this.position.y + camHeight;
+
+        this.camera.position.set(camX, camY, camZ);
+        this.camera.lookAt(
+            this.position.x,
+            this.position.y - 0.5,
+            this.position.z
+        );
+
+        return true; // Still active
+    }
+
+    spawn3DDollarBill(scene) {
+        // Create a 3D green dollar bill mesh
+        const billGeo = new THREE.BoxGeometry(0.4, 0.02, 0.2);
+        const billMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0.1 + Math.random() * 0.15, 0.5 + Math.random() * 0.3, 0.1),
+            transparent: true,
+            opacity: 1.0,
+            side: THREE.DoubleSide
+        });
+        const billMesh = new THREE.Mesh(billGeo, billMat);
+
+        // Spawn from character's hand positions (world space)
+        const isLeft = Math.random() > 0.5;
+        const handOffset = isLeft ? -0.5 : 0.5;
+        const sinA = Math.sin(this.moneySpreadSpinAngle);
+        const cosA = Math.cos(this.moneySpreadSpinAngle);
+
+        billMesh.position.set(
+            this.position.x + cosA * handOffset,
+            this.position.y - 0.5 + Math.random() * 0.5,
+            this.position.z - sinA * handOffset
+        );
+
+        // Random outward velocity
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 2 + Math.random() * 4;
+        const bill = {
+            mesh: billMesh,
+            vx: Math.cos(angle) * speed,
+            vy: 3 + Math.random() * 4,
+            vz: Math.sin(angle) * speed,
+            spinX: (Math.random() - 0.5) * 8,
+            spinY: (Math.random() - 0.5) * 8,
+            spinZ: (Math.random() - 0.5) * 8,
+            life: 0,
+            phase: Math.random() * Math.PI * 2
+        };
+
+        scene.add(billMesh);
+        this.moneySpreadBills3D.push(bill);
+    }
+
+    endMoneySpread(scene) {
+        this.moneySpreadActive = false;
+
+        // Hide character model
+        this.characterMesh.visible = false;
+
+        // Reset arm positions
+        if (this._leftArm) {
+            this._leftArm.rotation.z = 0;
+            this._leftArm.position.set(-0.32, 0.88, 0);
+        }
+        if (this._rightArm) {
+            this._rightArm.rotation.z = 0;
+            this._rightArm.position.set(0.32, 0.88, 0);
+        }
+        if (this._leftHand) this._leftHand.position.set(-0.32, 0.58, 0);
+        if (this._rightHand) this._rightHand.position.set(0.32, 0.58, 0);
+
+        // Clean up remaining 3D bills
+        for (const bill of this.moneySpreadBills3D) {
+            scene.remove(bill.mesh);
+            bill.mesh.geometry.dispose();
+            bill.mesh.material.dispose();
+        }
+        this.moneySpreadBills3D = [];
+
+        // Restore first-person camera
+        this.updateCamera();
     }
 
     createHighlightMesh() {

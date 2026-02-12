@@ -16,6 +16,7 @@
     let rKeyWasDown = false;
     let uKeyWasDown = false;
     let drivingMode = false;
+    let moneySpreadMode = false; // Third-person money spread on foot
     let smoothCamPos = null; // For smooth camera follow
     const CAR_ENTER_DISTANCE = 6; // How close to be to enter car
     const STRIPPER_INVITE_RANGE = 20; // How far to look for strippers to invite
@@ -221,8 +222,47 @@
             // Consume mouse input so it doesn't accumulate
             input.mouseDX = 0;
             input.mouseDY = 0;
+        } else if (player.moneySpreadActive) {
+            // === MONEY SPREAD THIRD-PERSON MODE ===
+            moneySpreadMode = true;
+            
+            // Update the third-person money spread animation
+            const stillActive = player.updateMoneySpread(dt, scene);
+            
+            if (!stillActive) {
+                // Money spread ended - restore normal mode
+                moneySpreadMode = false;
+                
+                // Restore glock visibility if it was equipped
+                if (glock && glock.equipped) {
+                    glock.gunGroup.visible = true;
+                }
+                
+                // Reset camera rotation order for first person
+                camera.rotation.order = 'YXZ';
+                camera.fov = 75;
+                camera.updateProjectionMatrix();
+            }
+            
+            // Still update world and NPCs during money spread
+            world.update(player.position.x, player.position.z);
+            world.animateWater(dt);
+            if (catSpawner) catSpawner.update(dt, player.position);
+            if (bongManSpawner) bongManSpawner.update(dt, player.position, catSpawner);
+            if (stripperSpawner) stripperSpawner.update(dt, player.position);
+            if (crackheadSpawner) crackheadSpawner.update(dt, player.position);
+            if (copSpawner) copSpawner.update(dt, player.position);
+            ui.update(dt, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, glock);
+            if (glock) glock.update(dt);
+            if (healthPotionSpawner) healthPotionSpawner.update(dt, player.position);
+            
+            // Consume mouse input so it doesn't accumulate
+            input.mouseDX = 0;
+            input.mouseDY = 0;
         } else {
             // === NORMAL ON-FOOT MODE ===
+            moneySpreadMode = false;
+            
             // Toggle glock with G key
             const gKeyDown = input.keys['KeyG'];
             if (gKeyDown && !gKeyWasDown && glock) {
@@ -230,9 +270,9 @@
             }
             gKeyWasDown = gKeyDown;
 
-            // Money spread with M key
+            // Money spread with M key (only if not already in money spread)
             const mKeyDown = input.keys['KeyM'];
-            if (mKeyDown && !mKeyWasDown && glock) {
+            if (mKeyDown && !mKeyWasDown && glock && !player.moneySpreadActive) {
                 glock.moneySpread();
             }
             mKeyWasDown = mKeyDown;

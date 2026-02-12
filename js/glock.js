@@ -677,6 +677,15 @@ class Glock {
         
         // Play the money flash sound
         this.playMoneyFlashSound();
+
+        // If on foot (not driving), trigger third-person cinematic mode
+        if (!this.player.driving) {
+            this.player.startMoneySpread();
+            // Hide glock during money spread
+            if (this.equipped) {
+                this.gunGroup.visible = false;
+            }
+        }
         
         // Create the fanned money display (DOM overlay - gangsta hand fan)
         this.showMoneyFan(billCount);
