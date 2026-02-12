@@ -303,11 +303,13 @@
             drawMinimapLine(ctx, cx, cy, -viewRange, rz - pz, viewRange, rz - pz, playerYaw, MINIMAP_SCALE);
         }
 
-        // Draw remote players
+        // Draw remote players (only active ones)
         const remotePlayers = mp.getRemotePlayers();
         for (const pid in remotePlayers) {
             const rp = remotePlayers[pid];
             if (!rp || !rp.position) continue;
+            // Skip players that haven't sent position updates recently
+            if (!mp.isPlayerActive(pid)) continue;
 
             // Relative position
             const dx = rp.position.x - px;

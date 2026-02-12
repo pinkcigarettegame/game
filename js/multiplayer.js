@@ -410,6 +410,8 @@ class Multiplayer {
                     // Client receives welcome from host with existing players
                     if (!this.isHost) {
                         // Add host as a remote player
+                        // lastUpdate is 0 until host actually sends position data
+                        // This prevents phantom player count from stale hosts
                         this.remotePlayers[this.HOST_ID] = {
                             name: data.hostName || 'Host',
                             position: { x: 0, y: 30, z: 0 },
@@ -417,7 +419,7 @@ class Multiplayer {
                             health: 20,
                             driving: false,
                             glockEquipped: false,
-                            lastUpdate: Date.now()
+                            lastUpdate: 0
                         };
                         
                         // Add existing players
@@ -676,14 +678,31 @@ class Multiplayer {
         this.broadcast({ type: 'shoot', id: this.myId });
     }
     
-    // Get player count (including self)
+    // Get player count (including self) - only counts players with recent updates
     getPlayerCount() {
-        return Object.keys(this.remotePlayers).length + 1;
+        const now = Date.now();
+        let count = 1; // Self
+        for (const pid in this.remotePlayers) {
+            const rp = this.remotePlayers[pid];
+            // Only count players that have sent a position update in the last 30 seconds
+            if (rp.lastUpdate && (now - rp.lastUpdate) < 30000) {
+                count++;
+            }
+        }
+        return count;
     }
     
-    // Get all remote player data
+    // Get all remote player data (only active players)
     getRemotePlayers() {
         return this.remotePlayers;
+    }
+    
+    // Check if a remote player is active (has recent updates)
+    isPlayerActive(peerId) {
+        const rp = this.remotePlayers[peerId];
+        if (!rp) return false;
+        if (!rp.lastUpdate) return false;
+        return (Date.now() - rp.lastUpdate) < 30000;
     }
     
     _updateStatus(state, message) {
