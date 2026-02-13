@@ -84,6 +84,12 @@
 
         // Initialize game systems
         input = new InputHandler();
+        
+        // Initialize bindings system and wire into input handler
+        const bindings = new Bindings();
+        input.bindings = bindings;
+        window.settingsUI = new SettingsUI(bindings);
+        
         world = new World(scene);
         player = new Player(camera, world);
         ui = new UI(player, world);

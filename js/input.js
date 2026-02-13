@@ -114,83 +114,60 @@ class InputHandler {
     }
 
     // === ARCADE CABINET GAMEPAD SUPPORT ===
-    // Polls gamepad state and OR's it into the existing input state.
-    // Arcade layout (from proto7ype-arcade button-tester):
-    //   Gamepad 0 (Main): B7=UP, B4=DOWN, B5=LEFT, B6=RIGHT, B8=ACTION1, B9=ACTION2, B2=COIN, B3=START
-    //   Gamepad 1 (P2/Select): B7=UP, B4=DOWN, B5=LEFT, B6=RIGHT, B2=ACTION1(P2), B3=ACTION2(P2), B8=1P_SELECT, B9=2P_SELECT
-    //
-    // Mapping:
-    //   GP0 D-pad (4-7)       -> Movement (WASD)
-    //   GP0 ACTION1 (8)       -> Jump/Swim (Space)
-    //   GP0 ACTION2 (9)       -> Sprint/Dive (Shift)
-    //   GP0 COIN (2)          -> Toggle Glock (G)
-    //   GP0 START (3)         -> Start game / Respawn (handled externally via arcadeStartPressed)
-    //   GP1 D-pad (4-7)       -> Camera look (simulated mouse movement)
-    //   GP1 ACTION1 P2 (2)    -> Shoot/Break (Left Click)
-    //   GP1 ACTION2 P2 (3)    -> Place Block (Right Click)
-    //   GP1 1P SELECT (8)     -> Enter/Exit Car (H)
-    //   GP1 2P SELECT (9)     -> Money/Invite (M)
+    // Polls gamepad state using configurable bindings and OR's into existing input state.
+    // If no bindings object is set, does nothing.
     pollGamepads() {
+        if (!this.bindings) return;
+
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        const gp0 = gamepads[0];
-        const gp1 = gamepads[1];
 
-        // Helper: check if a button is pressed
-        const btn = (gp, index) => gp && gp.buttons[index] && gp.buttons[index].pressed;
+        // Helper: check if a bound gamepad button is pressed
+        const gpBtn = (actionId) => {
+            const gp = this.bindings.getGamepad(actionId);
+            if (!gp) return false;
+            const pad = gamepads[gp.index];
+            return pad && pad.buttons[gp.button] && pad.buttons[gp.button].pressed;
+        };
 
-        // --- Gamepad 0: Movement + Actions ---
-        if (gp0) {
-            // D-pad -> Movement keys (OR with keyboard)
-            if (btn(gp0, 7)) this.keys['KeyW'] = true;       // UP -> Forward
-            if (btn(gp0, 4)) this.keys['KeyS'] = true;       // DOWN -> Back
-            if (btn(gp0, 5)) this.keys['KeyA'] = true;       // LEFT -> Strafe left
-            if (btn(gp0, 6)) this.keys['KeyD'] = true;       // RIGHT -> Strafe right
+        const LOOK_SPEED = 8; // pixels of simulated mouse movement per frame
 
-            // ACTION1 -> Jump / Swim up
-            if (btn(gp0, 8)) this.keys['Space'] = true;
+        // --- Movement ---
+        if (gpBtn('moveForward')) this.keys['KeyW'] = true;
+        if (gpBtn('moveBack'))    this.keys['KeyS'] = true;
+        if (gpBtn('moveLeft'))    this.keys['KeyA'] = true;
+        if (gpBtn('moveRight'))   this.keys['KeyD'] = true;
 
-            // ACTION2 -> Sprint / Dive
-            if (btn(gp0, 9)) this.keys['ShiftLeft'] = true;
+        // --- Jump / Sprint ---
+        if (gpBtn('jump'))   this.keys['Space'] = true;
+        if (gpBtn('sprint')) this.keys['ShiftLeft'] = true;
 
-            // COIN -> Toggle Glock (G key)
-            if (btn(gp0, 2)) this.keys['KeyG'] = true;
+        // --- Camera Look (simulated mouse) ---
+        if (gpBtn('lookUp'))    this.mouseDY -= LOOK_SPEED;
+        if (gpBtn('lookDown'))  this.mouseDY += LOOK_SPEED;
+        if (gpBtn('lookLeft'))  this.mouseDX -= LOOK_SPEED;
+        if (gpBtn('lookRight')) this.mouseDX += LOOK_SPEED;
 
-            // START -> exposed as a flag for main.js to handle start/respawn
-            this.arcadeStartPressed = !!btn(gp0, 3);
+        // --- Shoot / Place ---
+        if (gpBtn('shoot')) this.mouseLeft = true;
+        if (gpBtn('place')) this.mouseRight = true;
 
-            // Also map Digit keys for hotbar via GP0 buttons 0,1 if needed
-            // (buttons 0 and 1 are unmapped on the arcade - reserved)
-        }
+        // --- Action keys (mapped to keyboard codes so main.js edge detection works) ---
+        if (gpBtn('toggleGlock')) this.keys['KeyG'] = true;
+        if (gpBtn('enterCar'))    this.keys['KeyH'] = true;
+        if (gpBtn('money'))       this.keys['KeyM'] = true;
+        if (gpBtn('reload'))      this.keys['KeyR'] = true;
+        if (gpBtn('shop'))        this.keys['KeyB'] = true;
 
-        // --- Gamepad 1: Camera Look + Shoot/Place + Car/Money ---
-        if (gp1) {
-            // D-pad -> Simulated mouse look (camera rotation)
-            const LOOK_SPEED = 8; // pixels of simulated mouse movement per frame
-            if (btn(gp1, 7)) this.mouseDY -= LOOK_SPEED;  // UP -> Look up
-            if (btn(gp1, 4)) this.mouseDY += LOOK_SPEED;  // DOWN -> Look down
-            if (btn(gp1, 5)) this.mouseDX -= LOOK_SPEED;  // LEFT -> Look left
-            if (btn(gp1, 6)) this.mouseDX += LOOK_SPEED;  // RIGHT -> Look right
+        // --- Start / Respawn (exposed as flag for main.js) ---
+        this.arcadeStartPressed = gpBtn('start');
 
-            // ACTION1 P2 -> Shoot / Break block (left click)
-            if (btn(gp1, 2)) this.mouseLeft = true;
-
-            // ACTION2 P2 -> Place block (right click)
-            if (btn(gp1, 3)) this.mouseRight = true;
-
-            // 1P SELECT -> Enter/Exit Car (H key)
-            if (btn(gp1, 8)) this.keys['KeyH'] = true;
-
-            // 2P SELECT -> Money spread / Invite stripper (M key)
-            if (btn(gp1, 9)) this.keys['KeyM'] = true;
-        }
-
-        // Also handle hotbar cycling: GP0 buttons 0 and 1 for prev/next slot
-        if (gp0) {
-            if (btn(gp0, 0) && !this._gp0Btn0Was) this.scrollDelta -= 1; // Button 0 -> prev slot
-            if (btn(gp0, 1) && !this._gp0Btn1Was) this.scrollDelta += 1; // Button 1 -> next slot
-            this._gp0Btn0Was = !!btn(gp0, 0);
-            this._gp0Btn1Was = !!btn(gp0, 1);
-        }
+        // --- Hotbar cycling (edge-detected) ---
+        const hpPressed = gpBtn('hotbarPrev');
+        const hnPressed = gpBtn('hotbarNext');
+        if (hpPressed && !this._gpHotbarPrevWas) this.scrollDelta -= 1;
+        if (hnPressed && !this._gpHotbarNextWas) this.scrollDelta += 1;
+        this._gpHotbarPrevWas = hpPressed;
+        this._gpHotbarNextWas = hnPressed;
     }
 }
 
