@@ -469,17 +469,25 @@
             input.requestPointerLock();
         }
 
-        // === H KEY: Enter/Exit car ===
+        // === H KEY: Enter/Exit car (or steal remote player's car!) ===
         const hKeyDown = input.keys['KeyH'];
-        if (hKeyDown && !hKeyWasDown && challenger) {
-            if (drivingMode) {
+        if (hKeyDown && !hKeyWasDown) {
+            if (drivingMode && challenger) {
                 // Exit the car
                 exitCar();
-            } else {
-                // Check if close enough to enter
-                const dist = challenger.getDistanceTo(player.position);
-                if (dist < CAR_ENTER_DISTANCE) {
-                    enterCar();
+            } else if (!drivingMode) {
+                // Check own car first
+                let enteredOwnCar = false;
+                if (challenger) {
+                    const dist = challenger.getDistanceTo(player.position);
+                    if (dist < CAR_ENTER_DISTANCE) {
+                        enterCar();
+                        enteredOwnCar = true;
+                    }
+                }
+                // If not near own car, check for remote players' parked cars to steal
+                if (!enteredOwnCar && remoteRenderer && mp) {
+                    tryStealRemoteCar();
                 }
             }
         }
@@ -618,8 +626,15 @@
                 }
             }
 
-            // Update game systems
-            player.update(dt, input);
+            // Update game systems (skip player input when shop menu is open to prevent movement/hotbar conflicts)
+            if (shopMenuOpen) {
+                // Only update timers, not movement or input
+                player.damageFlash = Math.max(0, player.damageFlash - dt);
+                player.invulnerable = Math.max(0, player.invulnerable - dt);
+                player.updateCamera();
+            } else {
+                player.update(dt, input);
+            }
             world.update(player.position.x, player.position.z);
             world.animateWater(dt);
             if (catSpawner) catSpawner.update(dt, player.position);
@@ -642,7 +657,7 @@
         if (bKeyDown && !bKeyWasDown) {
             if (shopMenuOpen) {
                 closeShopMenu();
-            } else if (!drivingMode) {
+            } else if (!drivingMode && !player.moneySpreadActive) {
                 // Try to open shop if near a store
                 if (liquorStoreSpawner) {
                     const store = liquorStoreSpawner.getNearestShoppableStore(player.position);
@@ -657,6 +672,14 @@
         // === SHOP MENU: Handle number key purchases ===
         if (shopMenuOpen && !drivingMode) {
             handleShopInput();
+
+            // Auto-close shop if player is no longer near the store
+            if (activeShopStore) {
+                const stillNear = activeShopStore.alive && activeShopStore.isPlayerInShopRange(player.position);
+                if (!stillNear) {
+                    closeShopMenu();
+                }
+            }
         }
 
         // === ESC to close shop ===
@@ -672,14 +695,28 @@
 
         // === MULTIPLAYER UPDATE ===
         if (mp && mp.connected) {
-            // Broadcast local player position (include car rotation when driving)
+            // Build car position data for when we're NOT driving (so others can see our parked car)
+            let carPosData = null;
+            if (!drivingMode && challenger) {
+                carPosData = {
+                    x: challenger.position.x,
+                    y: challenger.position.y,
+                    z: challenger.position.z,
+                    rotation: challenger.rotation
+                };
+            }
+            const passengerCount = (drivingMode && challenger) ? challenger.getPassengerCount() : 0;
+            
+            // Broadcast local player position (include car rotation when driving, car position when parked)
             mp.broadcastPosition(
                 player.position,
                 { x: camera.rotation.x, y: camera.rotation.y },
                 player.health,
                 drivingMode,
                 glock ? glock.equipped : false,
-                drivingMode && challenger ? challenger.rotation : undefined
+                drivingMode && challenger ? challenger.rotation : undefined,
+                carPosData,
+                passengerCount
             );
         }
         
@@ -1734,6 +1771,149 @@
         }
     }
 
+    // === STEAL REMOTE PLAYER'S CAR ===
+    function tryStealRemoteCar() {
+        if (!remoteRenderer || !mp || drivingMode) return;
+        
+        const STEAL_DISTANCE = 8; // How close to be to steal a parked car
+        
+        // Check all remote players for parked cars nearby
+        for (const pid in remoteRenderer.players) {
+            const rp = remoteRenderer.players[pid];
+            if (!rp || !rp.carParkedPosition) continue;
+            if (rp.driving) continue; // Can't steal a car someone is driving
+            
+            // Calculate distance to the parked car
+            const carPos = rp.carParkedPosition;
+            const dx = carPos.x - player.position.x;
+            const dz = carPos.z - player.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            
+            if (dist < STEAL_DISTANCE) {
+                // Found a stealable car! Teleport our car to this location
+                const stolenName = rp.name || 'Unknown';
+                const stolenPassengers = rp.passengerCount || 0;
+                
+                // Move our challenger to the stolen car's position
+                if (challenger) {
+                    challenger.position.set(carPos.x, carPos.y, carPos.z);
+                    challenger.rotation = rp.carParkedRotation || 0;
+                    challenger.mesh.position.copy(challenger.position);
+                    challenger.mesh.rotation.y = challenger.rotation;
+                    challenger.speed = 0;
+                }
+                
+                // Enter the stolen car immediately
+                enterCar();
+                
+                // Show steal message
+                showStealMessage(stolenName, stolenPassengers);
+                
+                // Play steal sound (car alarm + engine rev)
+                playStealSound();
+                
+                // Add wanted level for stealing
+                if (copSpawner) copSpawner.addWanted(2);
+                
+                // Show multiplayer message
+                showMPMessage('🚗💨 You stole ' + stolenName + '\'s car!', '#ff4444');
+                
+                return; // Only steal one car
+            }
+        }
+    }
+    
+    function showStealMessage(ownerName, passengerCount) {
+        const inviteMsg = document.getElementById('invite-message');
+        if (!inviteMsg) return;
+        
+        const messages = [
+            `🚗💨 JACKED ${ownerName}'s WHIP! 🔥`,
+            `😈 YOINK! ${ownerName}'s car is YOURS! 🚗`,
+            `🏎️💀 GRAND THEFT AUTO on ${ownerName}! 💸`,
+            `🔥 ${ownerName} just got CARJACKED! 😂`,
+            `💀 ${ownerName}'s ride? YOUR ride now! 🚗`
+        ];
+        let text = messages[Math.floor(Math.random() * messages.length)];
+        if (passengerCount > 0) {
+            text += ` (+${passengerCount} 💃)`;
+        }
+        inviteMsg.textContent = text;
+        
+        inviteMsg.classList.remove('active');
+        inviteMsg.style.display = 'none';
+        void inviteMsg.offsetWidth;
+        inviteMsg.style.display = 'block';
+        inviteMsg.classList.add('active');
+        
+        setTimeout(() => {
+            inviteMsg.classList.remove('active');
+            inviteMsg.style.display = 'none';
+        }, 3000);
+    }
+    
+    function playStealSound() {
+        try {
+            const ctx = getAudioCtx();
+            const t = ctx.currentTime;
+            
+            // Car alarm beep (high pitched)
+            const alarm = ctx.createOscillator();
+            alarm.type = 'square';
+            alarm.frequency.setValueAtTime(1200, t);
+            alarm.frequency.setValueAtTime(800, t + 0.1);
+            alarm.frequency.setValueAtTime(1200, t + 0.2);
+            alarm.frequency.setValueAtTime(800, t + 0.3);
+            const alarmGain = ctx.createGain();
+            alarmGain.gain.setValueAtTime(0.15, t);
+            alarmGain.gain.setValueAtTime(0.15, t + 0.35);
+            alarmGain.gain.linearRampToValueAtTime(0, t + 0.5);
+            alarm.connect(alarmGain);
+            alarmGain.connect(ctx.destination);
+            alarm.start(t);
+            alarm.stop(t + 0.5);
+            
+            // Engine rev (low rumble)
+            const engine = ctx.createOscillator();
+            engine.type = 'sawtooth';
+            engine.frequency.setValueAtTime(60, t + 0.3);
+            engine.frequency.linearRampToValueAtTime(200, t + 0.8);
+            engine.frequency.linearRampToValueAtTime(120, t + 1.2);
+            const engineGain = ctx.createGain();
+            engineGain.gain.setValueAtTime(0, t);
+            engineGain.gain.linearRampToValueAtTime(0.2, t + 0.5);
+            engineGain.gain.linearRampToValueAtTime(0.1, t + 1.0);
+            engineGain.gain.linearRampToValueAtTime(0, t + 1.3);
+            const engineLP = ctx.createBiquadFilter();
+            engineLP.type = 'lowpass';
+            engineLP.frequency.setValueAtTime(300, t);
+            engine.connect(engineLP);
+            engineLP.connect(engineGain);
+            engineGain.connect(ctx.destination);
+            engine.start(t + 0.3);
+            engine.stop(t + 1.4);
+            
+            // Tire screech (noise burst)
+            const screechBuf = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate);
+            const screechData = screechBuf.getChannelData(0);
+            for (let i = 0; i < screechData.length; i++) {
+                screechData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.1));
+            }
+            const screech = ctx.createBufferSource();
+            screech.buffer = screechBuf;
+            const screechGain = ctx.createGain();
+            screechGain.gain.setValueAtTime(0.1, t + 0.4);
+            screechGain.gain.exponentialRampToValueAtTime(0.01, t + 0.7);
+            const screechHP = ctx.createBiquadFilter();
+            screechHP.type = 'highpass';
+            screechHP.frequency.setValueAtTime(2000, t);
+            screech.connect(screechHP);
+            screechHP.connect(screechGain);
+            screechGain.connect(ctx.destination);
+            screech.start(t + 0.4);
+        } catch(e) {}
+    }
+
     function spawnChallenger() {
         // Try to spawn the car in a liquor store parking lot first
         if (liquorStoreSpawner && liquorStoreSpawner.stores.length > 0) {
@@ -1776,10 +1956,17 @@
         challenger = new DodgeChallenger(scene, world, carX, finalY, carZ, carRotation);
     }
 
-    // Click to re-lock pointer
+    // Click to re-lock pointer (but not when shop menu is open)
     document.addEventListener('click', () => {
-        if (gameStarted && !input.pointerLocked) {
+        if (gameStarted && !input.pointerLocked && !shopMenuOpen) {
             input.requestPointerLock();
+        }
+    });
+
+    // Clean up multiplayer on page unload (so other players see us leave immediately)
+    window.addEventListener('beforeunload', () => {
+        if (mp) {
+            mp.destroy();
         }
     });
 

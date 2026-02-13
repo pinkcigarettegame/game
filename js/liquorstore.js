@@ -14,7 +14,6 @@ class LiquorStore {
         this.shopOpen = false;
         this.glowPhase = Math.random() * Math.PI * 2;
         this.neonObjects = []; // Objects that glow/pulse
-        this.audioCtx = null;
 
         // Building dimensions
         this.width = 10;
@@ -704,6 +703,10 @@ class LiquorStore {
     update(dt, playerPos) {
         if (!this.alive) return;
 
+        // Only animate if player is reasonably close (performance optimization)
+        const dist = this.position.distanceTo(playerPos);
+        if (dist > 60) return; // Skip all animations for distant stores
+
         // Animate neon glow pulse
         this.glowPhase += dt * 3;
         const pulse = 0.6 + Math.sin(this.glowPhase) * 0.4;
@@ -717,19 +720,26 @@ class LiquorStore {
             }
         }
 
-        // Animate ticker scroll
+        // Animate ticker scroll (throttle to ~15fps for canvas redraws)
         this.tickerOffset += dt * 60;
-        this.updateTicker();
+        this._tickerTimer = (this._tickerTimer || 0) + dt;
+        if (this._tickerTimer > 0.066) { // ~15fps for ticker canvas updates
+            this._tickerTimer = 0;
+            this.updateTicker();
+        }
     }
 
-    // Shop menu items
+    // Shop menu items (cached to avoid creating new arrays every call)
     static getMenuItems() {
-        return [
-            { key: '1', name: 'Bitcoin Beer', emoji: '🍺', price: 10, heal: 3, effect: null, desc: 'Heals 3 HP' },
-            { key: '2', name: 'Ethereum Whiskey', emoji: '🥃', price: 25, heal: 8, effect: 'speed', desc: 'Heals 8 HP + Speed boost' },
-            { key: '3', name: 'Doge Champagne', emoji: '🍾', price: 50, heal: 20, effect: 'strippers', desc: 'Full heal + Spawns strippers' },
-            { key: '4', name: 'Shitcoin Moonshine', emoji: '🧪', price: 15, heal: 5, effect: 'high', desc: 'Heals 5 HP + Gets you high' }
-        ];
+        if (!LiquorStore._menuItems) {
+            LiquorStore._menuItems = [
+                { key: '1', name: 'Bitcoin Beer', emoji: '🍺', price: 10, heal: 3, effect: null, desc: 'Heals 3 HP' },
+                { key: '2', name: 'Ethereum Whiskey', emoji: '🥃', price: 25, heal: 8, effect: 'speed', desc: 'Heals 8 HP + Speed boost' },
+                { key: '3', name: 'Doge Champagne', emoji: '🍾', price: 50, heal: 20, effect: 'strippers', desc: 'Full heal + Spawns strippers' },
+                { key: '4', name: 'Shitcoin Moonshine', emoji: '🧪', price: 15, heal: 5, effect: 'high', desc: 'Heals 5 HP + Gets you high' }
+            ];
+        }
+        return LiquorStore._menuItems;
     }
 
     purchase(itemIndex, glock, player, stripperSpawner) {
@@ -792,12 +802,17 @@ class LiquorStore {
         return true;
     }
 
+    _getAudioCtx() {
+        // Use shared AudioContext to avoid creating multiple contexts (browser limit + performance)
+        if (!LiquorStore._sharedAudioCtx) {
+            LiquorStore._sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        return LiquorStore._sharedAudioCtx;
+    }
+
     playPurchaseSound() {
         try {
-            if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            const ctx = this.audioCtx;
+            const ctx = this._getAudioCtx();
             const t = ctx.currentTime;
 
             // Ka-ching! Cash register sound
@@ -846,10 +861,7 @@ class LiquorStore {
 
     playBrokeSound() {
         try {
-            if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            const ctx = this.audioCtx;
+            const ctx = this._getAudioCtx();
             const t = ctx.currentTime;
 
             // Sad buzzer

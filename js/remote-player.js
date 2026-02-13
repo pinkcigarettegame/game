@@ -98,6 +98,9 @@ class RemotePlayerRenderer {
         const p = this.players[peerId];
         if (!p) return;
         
+        // Always update lastMoveTime when we receive any data
+        p.lastMoveTime = Date.now();
+        
         if (data.position) {
             p.targetPosition.set(data.position.x, data.position.y, data.position.z);
             if (!p.visible) {
@@ -107,6 +110,9 @@ class RemotePlayerRenderer {
                 p.group.position.y -= 1.8; // Feet on ground
                 p.group.visible = true;
                 p.visible = true;
+            } else if (!p.group.visible) {
+                // Player was hidden (e.g. by timeout) but we got new data - re-show
+                p.group.visible = true;
             }
         }
         
@@ -120,6 +126,7 @@ class RemotePlayerRenderer {
         }
         
         if (data.driving !== undefined) {
+            const wasDriving = p.driving;
             p.driving = data.driving;
             p.model.visible = !data.driving; // Hide character when driving
             p.carModel.visible = data.driving; // Show car when driving
@@ -128,6 +135,17 @@ class RemotePlayerRenderer {
             if (data.driving) {
                 p.nameTag.position.set(0, 3.5, 0);
                 p.healthBar.position.set(0, 3.3, 0);
+                // Snap car rotation on driving transition to avoid slow spin
+                if (!wasDriving && data.carRotation !== undefined) {
+                    p.currentCarRotation = data.carRotation;
+                    p.targetCarRotation = data.carRotation;
+                    p.carModel.rotation.y = data.carRotation;
+                } else if (!wasDriving) {
+                    // No car rotation data yet - use player's current rotation
+                    p.currentCarRotation = p.currentRotationY;
+                    p.targetCarRotation = p.currentRotationY;
+                    p.carModel.rotation.y = p.currentRotationY;
+                }
             } else {
                 p.nameTag.position.set(0, 2.4, 0);
                 p.healthBar.position.set(0, 2.2, 0);
@@ -136,6 +154,49 @@ class RemotePlayerRenderer {
         
         if (data.carRotation !== undefined) {
             p.targetCarRotation = data.carRotation;
+            // If this is the first car rotation we receive while driving, snap to it
+            if (p.driving && !p._hasReceivedCarRotation) {
+                p.currentCarRotation = data.carRotation;
+                p.carModel.rotation.y = data.carRotation;
+                p._hasReceivedCarRotation = true;
+            }
+        }
+        // Reset the flag when not driving
+        if (!p.driving) {
+            p._hasReceivedCarRotation = false;
+        }
+        
+        // Track parked car position (when player is NOT driving, their car is parked somewhere)
+        if (data.carPosition && data.carPosition.x !== undefined) {
+            p.carParkedPosition = data.carPosition;
+            p.carParkedRotation = data.carParkedRotation || 0;
+            // Show parked car when player is on foot
+            if (!p.driving) {
+                p.carModel.visible = true;
+                // Position the car at the parked location (relative to group)
+                // The group is at the player's position, so we need to offset
+                const dx = data.carPosition.x - p.currentPosition.x;
+                const dy = (data.carPosition.y) - (p.currentPosition.y - 1.8); // car ground vs player group
+                const dz = data.carPosition.z - p.currentPosition.z;
+                p.carModel.position.set(dx, dy, dz);
+                p.carModel.rotation.y = p.carParkedRotation;
+                p._carIsParked = true;
+            }
+        } else if (!p.driving && !data.carPosition) {
+            // No car position data and not driving - hide car
+            if (!p._carIsParked) {
+                p.carModel.visible = false;
+            }
+        }
+        
+        // When driving, reset parked car state and center car on player
+        if (p.driving) {
+            p._carIsParked = false;
+            p.carModel.position.set(0, 1.8, 0); // Reset to centered on group
+        }
+        
+        if (data.passengerCount !== undefined) {
+            p.passengerCount = data.passengerCount;
         }
         
         if (data.glockEquipped !== undefined) {
@@ -166,10 +227,14 @@ class RemotePlayerRenderer {
             const prevPos = p.currentPosition.clone();
             p.currentPosition.lerp(p.targetPosition, Math.min(1, this.interpSpeed * dt));
             
-            // Position the group (offset Y for feet)
+            // Position the group (offset Y for feet on ground, or for car when driving)
+            // When driving, the broadcast position is car.y + 2 (player sits in car)
+            // Car model has internal Y offset of 1.8, so we need to subtract more when driving
+            // to place the car on the ground: (carY + 2) - 3.8 + 1.8(internal) = carY
+            const yOffset = p.driving ? 3.8 : 1.8;
             p.group.position.set(
                 p.currentPosition.x,
-                p.currentPosition.y - 1.8,
+                p.currentPosition.y - yOffset,
                 p.currentPosition.z
             );
             
@@ -223,9 +288,10 @@ class RemotePlayerRenderer {
             }
             
             // Fade out players that haven't updated in a while
+            // Aligned with Multiplayer.isPlayerActive() which uses 30 seconds
             const timeSinceUpdate = now - (p.lastMoveTime || now);
-            if (timeSinceUpdate > 15000) {
-                // 15 seconds without update - fade out
+            if (timeSinceUpdate > 30000) {
+                // 30 seconds without update - fade out
                 p.group.visible = false;
             }
         }

@@ -257,6 +257,11 @@ class Glock {
         // Recoil
         this.recoilTimer = 0.1;
 
+        // Broadcast shot to other players
+        if (window.mp && window.mp.connected) {
+            window.mp.broadcastShoot();
+        }
+
         // Shell ejection!
         this.ejectShell();
 

@@ -12,8 +12,15 @@ class Multiplayer {
         this.myId = null;
         this.playerName = 'Player';
         
-        // Fixed host ID - everyone connects to this
-        this.HOST_ID = 'pink-cig-world-host-v1';
+        // Fixed host ID - everyone on the same URL connects to this
+        // Include the page origin in the ID so different deployments don't collide
+        this.HOST_ID = 'pink-cig-' + this._hashString(
+            (typeof window !== 'undefined' && window.location ? window.location.origin + window.location.pathname : 'local')
+        );
+        
+        // PeerJS server configuration
+        // Auto-detect: use local server if available, fall back to cloud
+        this._peerServerConfig = this._detectPeerServer();
         
         // Player data
         this.remotePlayers = {}; // {peerId: {name, position, rotation, health, ...}}
@@ -41,6 +48,10 @@ class Multiplayer {
         this._isReconnecting = false; // Guard against duplicate reconnection attempts
         this._signalingReconnectAttempts = 0; // Track signaling-only reconnect attempts
         this.MAX_SIGNALING_RECONNECTS = 3; // Try reconnect() this many times before full recreate
+        
+        // Connection timeout for WebRTC negotiation
+        this._connectionTimeout = null;
+        this.CONNECTION_TIMEOUT_MS = 10000; // 10 seconds to establish WebRTC connection
         
         // Heartbeat / keepalive system
         this._heartbeatInterval = null;
@@ -74,15 +85,7 @@ class Multiplayer {
             this.peer = null;
         }
         
-        this.peer = new Peer(this.HOST_ID, {
-            debug: 0,
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ]
-            }
-        });
+        this.peer = new Peer(this.HOST_ID, this._getPeerOptions());
         
         this.peer.on('open', (id) => {
             console.log('[MP] I am the HOST! ID:', id);
@@ -150,15 +153,7 @@ class Multiplayer {
         }
         
         // Create peer with random ID
-        this.peer = new Peer(undefined, {
-            debug: 0,
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ]
-            }
-        });
+        this.peer = new Peer(undefined, this._getPeerOptions());
         
         this.peer.on('open', (id) => {
             this.myId = id;
@@ -170,8 +165,28 @@ class Multiplayer {
             const conn = this.peer.connect(this.HOST_ID, { reliable: true });
             this.hostConnection = conn;
             
+            // Start connection timeout - if WebRTC negotiation doesn't complete in time, retry
+            this._clearConnectionTimeout();
+            this._connectionTimeout = setTimeout(() => {
+                if (!this.connected && !this.destroyed) {
+                    console.log('[MP] Connection to host timed out after', this.CONNECTION_TIMEOUT_MS, 'ms');
+                    this._updateStatus('disconnected', 'Connection timed out');
+                    // Close the stale connection attempt
+                    try { conn.close(); } catch(e) {}
+                    this.hostConnection = null;
+                    // Destroy peer and try again
+                    if (this.peer) {
+                        try { this.peer.destroy(); } catch(e) {}
+                        this.peer = null;
+                    }
+                    this._isReconnecting = false;
+                    this._scheduleReconnect();
+                }
+            }, this.CONNECTION_TIMEOUT_MS);
+            
             conn.on('open', () => {
                 console.log('[MP] Connected to host!');
+                this._clearConnectionTimeout();
                 this.connected = true;
                 this.reconnectAttempts = 0;
                 this._updateStatus('connected', 'Connected!');
@@ -194,8 +209,10 @@ class Multiplayer {
             
             conn.on('close', () => {
                 console.log('[MP] Lost connection to host');
+                this._clearConnectionTimeout();
                 this.connected = false;
                 this.hostConnection = null;
+                this._stopHeartbeat();
                 
                 // Notify about all remote players leaving
                 for (const pid in this.remotePlayers) {
@@ -207,20 +224,26 @@ class Multiplayer {
                 
                 this._updateStatus('disconnected', 'Host disconnected');
                 
-                // Try to become the new host with a longer random delay
-                // Use a wider jitter range to reduce race conditions
+                // Host takeover: first try to reconnect as client (host may have just restarted),
+                // then fall back to becoming host ourselves.
+                // Use deterministic delay based on peer ID to reduce race conditions:
+                // shorter IDs get priority (try sooner).
                 if (!this.destroyed) {
-                    const delay = 2000 + Math.random() * 5000; // 2-7 seconds random delay
-                    console.log('[MP] Will attempt host takeover in', Math.round(delay), 'ms');
+                    // First, wait 2 seconds and try to join as client again
+                    // (in case the host just restarted or another client already took over)
+                    const idHash = this._hashPeerId(this.myId);
+                    const deterministicDelay = 2000 + (idHash % 4000); // 2-6 seconds based on ID
+                    console.log('[MP] Will attempt host takeover in', deterministicDelay, 'ms (id-based priority)');
                     setTimeout(() => {
                         if (this.destroyed) return;
+                        if (this.connected) return; // Already reconnected
                         if (this.peer) {
                             try { this.peer.destroy(); } catch(e) {}
                             this.peer = null;
                         }
                         this._isReconnecting = false; // Reset guard before attempting
                         this._tryBecomeHost();
-                    }, delay);
+                    }, deterministicDelay);
                 }
             });
             
@@ -410,8 +433,9 @@ class Multiplayer {
                     // Client receives welcome from host with existing players
                     if (!this.isHost) {
                         // Add host as a remote player
-                        // lastUpdate is 0 until host actually sends position data
-                        // This prevents phantom player count from stale hosts
+                        // Set lastUpdate to now since we just received a welcome,
+                        // proving the host is alive. Position will be updated when
+                        // the host sends its first position broadcast.
                         this.remotePlayers[this.HOST_ID] = {
                             name: data.hostName || 'Host',
                             position: { x: 0, y: 30, z: 0 },
@@ -419,7 +443,7 @@ class Multiplayer {
                             health: 20,
                             driving: false,
                             glockEquipped: false,
-                            lastUpdate: 0
+                            lastUpdate: Date.now()
                         };
                         
                         // Add existing players
@@ -484,10 +508,13 @@ class Multiplayer {
                             name: data.name || 'Unknown',
                             position: data.position,
                             rotation: data.rotation,
-                            health: data.health || 20,
-                            driving: data.driving || false,
-                            glockEquipped: data.glockEquipped || false,
+                            health: data.health !== undefined ? data.health : 20,
+                            driving: !!data.driving,
+                            glockEquipped: !!data.glockEquipped,
                             carRotation: data.carRotation,
+                            carPosition: data.carPosition || null,
+                            carParkedRotation: data.carParkedRotation || 0,
+                            passengerCount: data.passengerCount || 0,
                             lastUpdate: Date.now()
                         };
                     } else {
@@ -497,10 +524,13 @@ class Multiplayer {
                         rp.prevRotation = rp.rotation ? { ...rp.rotation } : data.rotation;
                         rp.position = data.position;
                         rp.rotation = data.rotation;
-                        rp.health = data.health || rp.health;
-                        rp.driving = data.driving || false;
-                        rp.glockEquipped = data.glockEquipped || false;
+                        if (data.health !== undefined) rp.health = data.health;
+                        rp.driving = !!data.driving;
+                        rp.glockEquipped = !!data.glockEquipped;
                         rp.carRotation = data.carRotation;
+                        if (data.carPosition !== undefined) rp.carPosition = data.carPosition;
+                        if (data.carParkedRotation !== undefined) rp.carParkedRotation = data.carParkedRotation;
+                        if (data.passengerCount !== undefined) rp.passengerCount = data.passengerCount;
                         if (data.name) rp.name = data.name;
                         rp.lastUpdate = Date.now();
                         rp.interpT = 0; // Reset interpolation
@@ -524,6 +554,13 @@ class Multiplayer {
                         };
                         if (data.carRotation !== undefined) {
                             relayMsg.carRotation = data.carRotation;
+                        }
+                        if (data.carPosition) {
+                            relayMsg.carPosition = data.carPosition;
+                            relayMsg.carParkedRotation = data.carParkedRotation;
+                        }
+                        if (data.passengerCount !== undefined) {
+                            relayMsg.passengerCount = data.passengerCount;
                         }
                         this._broadcastFromHost(relayMsg, senderId);
                     }
@@ -587,6 +624,11 @@ class Multiplayer {
                     if (this.remotePlayers[shooterId]) {
                         this.remotePlayers[shooterId].shooting = true;
                         this.remotePlayers[shooterId].shootTime = Date.now();
+                        
+                        // Notify renderer about the shoot event
+                        if (this.onPlayerUpdate) {
+                            this.onPlayerUpdate(shooterId, this.remotePlayers[shooterId]);
+                        }
                     }
                     
                     if (this.isHost) {
@@ -643,7 +685,7 @@ class Multiplayer {
     }
     
     // Broadcast local player position (throttled)
-    broadcastPosition(position, rotation, health, driving, glockEquipped, carRotation) {
+    broadcastPosition(position, rotation, health, driving, glockEquipped, carRotation, carPosition, passengerCount) {
         const now = Date.now();
         if (now - this.lastPositionBroadcast < this.POSITION_BROADCAST_INTERVAL) return;
         this.lastPositionBroadcast = now;
@@ -660,6 +702,14 @@ class Multiplayer {
         };
         if (carRotation !== undefined) {
             msg.carRotation = carRotation;
+        }
+        // Include parked car position so others can see/steal it
+        if (carPosition) {
+            msg.carPosition = { x: carPosition.x, y: carPosition.y, z: carPosition.z };
+            msg.carParkedRotation = carPosition.rotation;
+        }
+        if (passengerCount !== undefined) {
+            msg.passengerCount = passengerCount;
         }
         this.broadcast(msg);
     }
@@ -822,11 +872,111 @@ class Multiplayer {
         this._lastHostPong = 0;
     }
     
+    // Detect if we're being served from our own server (which has PeerJS built in)
+    _detectPeerServer() {
+        const loc = typeof window !== 'undefined' ? window.location : null;
+        if (!loc) return null;
+        
+        // If served from localhost or our own server, use the built-in PeerJS endpoint
+        const host = loc.hostname;
+        const port = parseInt(loc.port) || (loc.protocol === 'https:' ? 443 : 80);
+        const isLocal = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.');
+        
+        if (isLocal) {
+            console.log('[MP] Detected local server at', host + ':' + port, '- using built-in PeerJS');
+            return { host, port, path: '/peerjs', secure: loc.protocol === 'https:' };
+        }
+        
+        // For GitHub Pages or other static hosting, fall back to PeerJS cloud
+        console.log('[MP] Using PeerJS cloud signaling server');
+        return null;
+    }
+    
+    // Build PeerJS options object
+    _getPeerOptions() {
+        const opts = {
+            debug: 0,
+            config: {
+                iceServers: this._getIceServers()
+            }
+        };
+        
+        // If we detected a local/self-hosted PeerJS server, use it
+        if (this._peerServerConfig) {
+            opts.host = this._peerServerConfig.host;
+            opts.port = this._peerServerConfig.port;
+            opts.path = this._peerServerConfig.path;
+            opts.secure = this._peerServerConfig.secure;
+        }
+        
+        return opts;
+    }
+    
+    // Get ICE servers for WebRTC - multiple STUN servers + free TURN for NAT traversal
+    _getIceServers() {
+        return [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+            { urls: 'stun:stun.stunprotocol.org:3478' },
+            // Free TURN servers from Open Relay Project for players behind strict NATs
+            {
+                urls: 'turn:openrelay.metered.ca:80',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turn:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            }
+        ];
+    }
+    
+    // Simple hash of a string to a short alphanumeric string (for unique IDs)
+    _hashString(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+        }
+        return Math.abs(hash).toString(36);
+    }
+    
+    // Simple hash of peer ID string to a number (for deterministic host election)
+    _hashPeerId(id) {
+        if (!id) return Math.floor(Math.random() * 4000);
+        let hash = 0;
+        for (let i = 0; i < id.length; i++) {
+            const char = id.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32-bit integer
+        }
+        return Math.abs(hash);
+    }
+    
+    // Clear the WebRTC connection timeout
+    _clearConnectionTimeout() {
+        if (this._connectionTimeout) {
+            clearTimeout(this._connectionTimeout);
+            this._connectionTimeout = null;
+        }
+    }
+    
     // Clean up
     destroy() {
         this.destroyed = true;
         this._isReconnecting = false;
         this._stopHeartbeat();
+        this._clearConnectionTimeout();
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
