@@ -119,10 +119,19 @@ class Bindings {
         }
     }
 
-    // Set the gamepad binding for an action
+    // Set the gamepad binding for an action (button)
     setGamepad(actionId, gamepadIndex, buttonIndex) {
         if (this.bindings[actionId]) {
             this.bindings[actionId].gamepad = { index: gamepadIndex, button: buttonIndex };
+            this.save();
+        }
+    }
+
+    // Set the gamepad binding for an action (axis)
+    // direction: -1 (negative, e.g. up/left) or +1 (positive, e.g. down/right)
+    setGamepadAxis(actionId, gamepadIndex, axisIndex, direction) {
+        if (this.bindings[actionId]) {
+            this.bindings[actionId].gamepad = { index: gamepadIndex, axis: axisIndex, direction: direction };
             this.save();
         }
     }
@@ -168,7 +177,30 @@ class Bindings {
     // Get a human-readable label for a gamepad binding
     static gamepadLabel(gp) {
         if (!gp) return '—';
+        if (gp.axis !== undefined) {
+            const dirLabel = gp.direction < 0 ? '-' : '+';
+            const axisNames = { 0: 'L/R', 1: 'U/D' };
+            return 'GP' + gp.index + ' Axis' + gp.axis + dirLabel + (axisNames[gp.axis] || '');
+        }
         return 'GP' + gp.index + ' B' + gp.button;
+    }
+
+    // Check if a gamepad binding is currently active (pressed/tilted)
+    // Works for both button and axis bindings
+    static isGamepadActive(binding, gamepads) {
+        if (!binding) return false;
+        const pad = gamepads[binding.index];
+        if (!pad) return false;
+        if (binding.axis !== undefined) {
+            // Axis binding: check if axis is pushed in the right direction past threshold
+            const AXIS_THRESHOLD = 0.5;
+            const val = pad.axes[binding.axis];
+            if (val === undefined) return false;
+            if (binding.direction < 0) return val < -AXIS_THRESHOLD;
+            return val > AXIS_THRESHOLD;
+        }
+        // Button binding
+        return pad.buttons[binding.button] && pad.buttons[binding.button].pressed;
     }
 }
 

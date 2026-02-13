@@ -207,13 +207,21 @@ class SettingsUI {
 
     _snapshotGamepadStates() {
         this._prevGamepadStates = {};
+        this._prevAxisStates = {};
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const AXIS_THRESHOLD = 0.5;
         for (let gi = 0; gi < gamepads.length; gi++) {
             const gp = gamepads[gi];
             if (!gp) continue;
             this._prevGamepadStates[gi] = {};
             for (let bi = 0; bi < gp.buttons.length; bi++) {
                 this._prevGamepadStates[gi][bi] = gp.buttons[bi].pressed;
+            }
+            this._prevAxisStates[gi] = {};
+            for (let ai = 0; ai < gp.axes.length; ai++) {
+                const v = gp.axes[ai];
+                // Store direction: -1, 0, or +1
+                this._prevAxisStates[gi][ai] = v < -AXIS_THRESHOLD ? -1 : (v > AXIS_THRESHOLD ? 1 : 0);
             }
         }
     }
@@ -311,103 +319,162 @@ class SettingsUI {
 
     _pollGamepadForSettings() {
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const AXIS_THRESHOLD = 0.5;
+
+        // Helper: get current axis direction (-1, 0, +1)
+        const axisDir = (gp, ai) => {
+            const v = gp.axes[ai];
+            if (v === undefined) return 0;
+            return v < -AXIS_THRESHOLD ? -1 : (v > AXIS_THRESHOLD ? 1 : 0);
+        };
 
         if (this.listeningFor === 'gamepad') {
             // Check for any newly pressed button
             for (let gi = 0; gi < gamepads.length; gi++) {
                 const gp = gamepads[gi];
                 if (!gp) continue;
+                // Check buttons
                 for (let bi = 0; bi < gp.buttons.length; bi++) {
                     const pressed = gp.buttons[bi].pressed;
                     const wasPrev = this._prevGamepadStates[gi] && this._prevGamepadStates[gi][bi];
                     if (pressed && !wasPrev) {
-                        // New button press detected!
                         this.bindings.setGamepad(this.listeningActionId, gi, bi);
                         this.refreshRow(this.listeningActionId);
                         this.stopListening();
-                        this._snapshotGamepadStates(); // Re-snapshot to avoid re-triggering
+                        this._snapshotGamepadStates();
+                        return;
+                    }
+                }
+                // Check axes (joystick)
+                for (let ai = 0; ai < gp.axes.length; ai++) {
+                    const dir = axisDir(gp, ai);
+                    const prevDir = (this._prevAxisStates[gi] && this._prevAxisStates[gi][ai]) || 0;
+                    if (dir !== 0 && dir !== prevDir) {
+                        // New axis movement detected! Bind as axis
+                        this.bindings.setGamepadAxis(this.listeningActionId, gi, ai, dir);
+                        this.refreshRow(this.listeningActionId);
+                        this.stopListening();
+                        this._snapshotGamepadStates();
                         return;
                     }
                 }
             }
             // Update previous states
-            for (let gi = 0; gi < gamepads.length; gi++) {
-                const gp = gamepads[gi];
-                if (!gp) continue;
-                if (!this._prevGamepadStates[gi]) this._prevGamepadStates[gi] = {};
-                for (let bi = 0; bi < gp.buttons.length; bi++) {
-                    this._prevGamepadStates[gi][bi] = gp.buttons[bi].pressed;
-                }
-            }
-            return;
-        }
-
-        if (this.listeningFor === 'keyboard') {
-            // While listening for keyboard, still update gamepad states but don't act
             this._updatePrevGamepadStates(gamepads);
             return;
         }
 
-        // Not listening - use gamepad for navigation
+        if (this.listeningFor === 'keyboard') {
+            this._updatePrevGamepadStates(gamepads);
+            return;
+        }
+
+        // Not listening - use gamepad for navigation (buttons + axes)
         this._navCooldown = Math.max(0, this._navCooldown - 50);
-        if (this._navCooldown > 0) return;
+        if (this._navCooldown > 0) {
+            this._updatePrevGamepadStates(gamepads);
+            return;
+        }
+
+        let handled = false;
 
         for (let gi = 0; gi < gamepads.length; gi++) {
             const gp = gamepads[gi];
             if (!gp) continue;
+
+            // Check buttons for navigation
             for (let bi = 0; bi < gp.buttons.length; bi++) {
                 const pressed = gp.buttons[bi].pressed;
                 const wasPrev = this._prevGamepadStates[gi] && this._prevGamepadStates[gi][bi];
                 if (pressed && !wasPrev) {
-                    // Check if this is a d-pad button for navigation
-                    // We use the hardcoded proto7ype layout for settings navigation:
-                    // Any gamepad: button indices that are commonly UP/DOWN/LEFT/RIGHT
-                    // We'll check all gamepads for buttons 4(down),5(left),6(right),7(up)
-                    // and also standard gamepad d-pad 12(up),13(down),14(left),15(right)
                     if (bi === 7 || bi === 12) {
-                        // UP
                         this.selectedRow = Math.max(0, this.selectedRow - 1);
                         this.updateSelection();
                         this._navCooldown = 150;
+                        handled = true;
                     } else if (bi === 4 || bi === 13) {
-                        // DOWN
                         this.selectedRow = Math.min(this.rows.length - 1, this.selectedRow + 1);
                         this.updateSelection();
                         this._navCooldown = 150;
+                        handled = true;
                     } else if (bi === 5 || bi === 14) {
-                        // LEFT - edit keyboard binding
                         const actionId = this.bindings.actions[this.selectedRow]?.id;
                         if (actionId) this.startListening(actionId, 'keyboard');
                         this._navCooldown = 200;
+                        handled = true;
                     } else if (bi === 6 || bi === 15) {
-                        // RIGHT - edit gamepad binding
                         const actionId = this.bindings.actions[this.selectedRow]?.id;
                         if (actionId) this.startListening(actionId, 'gamepad');
                         this._navCooldown = 200;
+                        handled = true;
                     } else if (bi === 8 || bi === 2 || bi === 0 || bi === 9) {
-                        // ACTION / SELECT buttons - start listening for gamepad
                         const actionId = this.bindings.actions[this.selectedRow]?.id;
                         if (actionId) this.startListening(actionId, 'gamepad');
                         this._navCooldown = 200;
+                        handled = true;
                     } else if (bi === 3) {
-                        // START button - close settings
                         this.close();
                         this._navCooldown = 300;
+                        handled = true;
                     }
+                    if (handled) break;
                 }
             }
+            if (handled) break;
+
+            // Check axes for navigation (joystick up/down/left/right)
+            for (let ai = 0; ai < gp.axes.length; ai++) {
+                const dir = axisDir(gp, ai);
+                const prevDir = (this._prevAxisStates[gi] && this._prevAxisStates[gi][ai]) || 0;
+                if (dir !== 0 && dir !== prevDir) {
+                    if (ai === 1 && dir === -1) {
+                        // Axis 1 negative = UP
+                        this.selectedRow = Math.max(0, this.selectedRow - 1);
+                        this.updateSelection();
+                        this._navCooldown = 150;
+                        handled = true;
+                    } else if (ai === 1 && dir === 1) {
+                        // Axis 1 positive = DOWN
+                        this.selectedRow = Math.min(this.rows.length - 1, this.selectedRow + 1);
+                        this.updateSelection();
+                        this._navCooldown = 150;
+                        handled = true;
+                    } else if (ai === 0 && dir === -1) {
+                        // Axis 0 negative = LEFT - edit keyboard binding
+                        const actionId = this.bindings.actions[this.selectedRow]?.id;
+                        if (actionId) this.startListening(actionId, 'keyboard');
+                        this._navCooldown = 200;
+                        handled = true;
+                    } else if (ai === 0 && dir === 1) {
+                        // Axis 0 positive = RIGHT - edit gamepad binding
+                        const actionId = this.bindings.actions[this.selectedRow]?.id;
+                        if (actionId) this.startListening(actionId, 'gamepad');
+                        this._navCooldown = 200;
+                        handled = true;
+                    }
+                    if (handled) break;
+                }
+            }
+            if (handled) break;
         }
 
         this._updatePrevGamepadStates(gamepads);
     }
 
     _updatePrevGamepadStates(gamepads) {
+        const AXIS_THRESHOLD = 0.5;
         for (let gi = 0; gi < gamepads.length; gi++) {
             const gp = gamepads[gi];
             if (!gp) continue;
             if (!this._prevGamepadStates[gi]) this._prevGamepadStates[gi] = {};
             for (let bi = 0; bi < gp.buttons.length; bi++) {
                 this._prevGamepadStates[gi][bi] = gp.buttons[bi].pressed;
+            }
+            if (!this._prevAxisStates) this._prevAxisStates = {};
+            if (!this._prevAxisStates[gi]) this._prevAxisStates[gi] = {};
+            for (let ai = 0; ai < gp.axes.length; ai++) {
+                const v = gp.axes[ai];
+                this._prevAxisStates[gi][ai] = v < -AXIS_THRESHOLD ? -1 : (v > AXIS_THRESHOLD ? 1 : 0);
             }
         }
     }

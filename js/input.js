@@ -121,12 +121,10 @@ class InputHandler {
 
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
 
-        // Helper: check if a bound gamepad button is pressed
+        // Helper: check if a bound gamepad input is active (supports buttons AND axes)
         const gpBtn = (actionId) => {
             const gp = this.bindings.getGamepad(actionId);
-            if (!gp) return false;
-            const pad = gamepads[gp.index];
-            return pad && pad.buttons[gp.button] && pad.buttons[gp.button].pressed;
+            return Bindings.isGamepadActive(gp, gamepads);
         };
 
         const LOOK_SPEED = 8; // pixels of simulated mouse movement per frame
