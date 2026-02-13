@@ -448,8 +448,26 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
+    // Track previous arcade START button state for edge detection
+    let arcadeStartWasPressed = false;
+
     function animate() {
         requestAnimationFrame(animate);
+
+        // === ARCADE GAMEPAD POLLING ===
+        if (input) {
+            input.pollGamepads();
+        }
+
+        // === ARCADE START BUTTON: start game or respawn ===
+        if (input && input.arcadeStartPressed && !arcadeStartWasPressed) {
+            if (!gameStarted) {
+                startGame();
+            } else if (player && player.dead) {
+                player.respawn();
+            }
+        }
+        arcadeStartWasPressed = input ? !!input.arcadeStartPressed : false;
 
         if (!gameStarted) {
             renderer.render(scene, camera);
