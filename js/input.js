@@ -129,15 +129,33 @@ class InputHandler {
 
         const LOOK_SPEED = 8; // pixels of simulated mouse movement per frame
 
+        // Helper: OR a gamepad input into a key (set true when pressed, but also
+        // clear the gamepad contribution when released so edge detection works)
+        const gpKey = (actionId, keyCode) => {
+            const pressed = gpBtn(actionId);
+            const prevWas = this._gpKeyStates && this._gpKeyStates[keyCode];
+            if (pressed) {
+                this.keys[keyCode] = true;
+            } else if (prevWas) {
+                // Gamepad was holding this key last frame but released now.
+                // Only clear if keyboard isn't also holding it.
+                // We can't easily know keyboard state, so just clear it.
+                // Keyboard keyup events will handle their own clearing.
+                this.keys[keyCode] = false;
+            }
+            if (!this._gpKeyStates) this._gpKeyStates = {};
+            this._gpKeyStates[keyCode] = pressed;
+        };
+
         // --- Movement ---
-        if (gpBtn('moveForward')) this.keys['KeyW'] = true;
-        if (gpBtn('moveBack'))    this.keys['KeyS'] = true;
-        if (gpBtn('moveLeft'))    this.keys['KeyA'] = true;
-        if (gpBtn('moveRight'))   this.keys['KeyD'] = true;
+        gpKey('moveForward', 'KeyW');
+        gpKey('moveBack',    'KeyS');
+        gpKey('moveLeft',    'KeyA');
+        gpKey('moveRight',   'KeyD');
 
         // --- Jump / Sprint ---
-        if (gpBtn('jump'))   this.keys['Space'] = true;
-        if (gpBtn('sprint')) this.keys['ShiftLeft'] = true;
+        gpKey('jump',   'Space');
+        gpKey('sprint', 'ShiftLeft');
 
         // --- Camera Look (simulated mouse) ---
         if (gpBtn('lookUp'))    this.mouseDY -= LOOK_SPEED;
@@ -150,11 +168,11 @@ class InputHandler {
         if (gpBtn('place')) this.mouseRight = true;
 
         // --- Action keys (mapped to keyboard codes so main.js edge detection works) ---
-        if (gpBtn('toggleGlock')) this.keys['KeyG'] = true;
-        if (gpBtn('enterCar'))    this.keys['KeyH'] = true;
-        if (gpBtn('money'))       this.keys['KeyM'] = true;
-        if (gpBtn('reload'))      this.keys['KeyR'] = true;
-        if (gpBtn('shop'))        this.keys['KeyB'] = true;
+        gpKey('toggleGlock', 'KeyG');
+        gpKey('enterCar',    'KeyH');
+        gpKey('money',       'KeyM');
+        gpKey('reload',      'KeyR');
+        gpKey('shop',        'KeyB');
 
         // --- Start / Respawn (exposed as flag for main.js) ---
         this.arcadeStartPressed = gpBtn('start');
