@@ -22,6 +22,9 @@ class Stripper {
         this.inCar = false; // Whether this stripper is riding in the car
         this.hired = false; // Whether this stripper has been paid for (stays with player)
         this.collected = false; // Whether this stripper is in the player's collection (hidden)
+        this.guardingCar = false; // Whether this stripper is guarding the car with suppressing fire
+        this.guardPosition = null; // Position near the car to patrol/guard
+        this.guardCarRef = null; // Reference to the car being guarded
         this.carRef = null; // Reference to the car when riding in it
 
         // Armed combat system
@@ -365,6 +368,8 @@ class Stripper {
         if (target.health <= 0) {
             target.alive = false;
             target.dispose();
+            // Register kill on player's kill streak (stripper kills count for the player!)
+            if (this.glockRef) this.glockRef.registerKill();
             // Remove from spawner array
             if (targetType === 'crackhead' && this.crackheadSpawner) {
                 const idx = this.crackheadSpawner.crackheads.indexOf(target);
@@ -372,15 +377,19 @@ class Stripper {
                 // Stripper kills earn money for the player!
                 if (this.glockRef) {
                     this.glockRef.money += 2;
-                    this.glockRef.spawnDollarBill();
+                    // Only spawn dollar bill if under cap (performance)
+                    if (!window.particleCaps || window.particleCaps.dollarBills.active < window.particleCaps.dollarBills.max) {
+                        this.glockRef.spawnDollarBill();
+                    }
                 }
             } else if (targetType === 'cop' && this.copSpawner) {
                 const idx = this.copSpawner.cops.indexOf(target);
                 if (idx >= 0) this.copSpawner.cops.splice(idx, 1);
                 if (this.glockRef) {
                     this.glockRef.money += 10;
-                    for (let d = 0; d < 5; d++) {
-                        setTimeout(() => this.glockRef.spawnDollarBill(), d * 80);
+                    // Only 1 dollar bill per cop kill from strippers (performance)
+                    if (!window.particleCaps || window.particleCaps.dollarBills.active < window.particleCaps.dollarBills.max) {
+                        this.glockRef.spawnDollarBill();
                     }
                 }
             }
@@ -397,7 +406,8 @@ class Stripper {
     }
 
     createSmallBloodEffect(hitPos) {
-        for (let i = 0; i < 6; i++) {
+        // Reduced from 6 to 3 particles for performance with many strippers
+        for (let i = 0; i < 3; i++) {
             const size = 0.03 + Math.random() * 0.05;
             const geo = new THREE.BoxGeometry(size, size, size);
             const shade = 0.5 + Math.random() * 0.5;
@@ -569,6 +579,108 @@ class Stripper {
             this.updateCombat(dt);
             return;
         }
+        // Guarding car strippers - stay near the car and provide suppressing fire
+        if (this.guardingCar && this.guardPosition) {
+            this.dancePhase += dt * 3;
+
+            // Check if in water
+            const guardFeetBlock = this.world.getBlock(Math.floor(this.position.x), Math.floor(this.position.y), Math.floor(this.position.z));
+            const guardBodyBlock = this.world.getBlock(Math.floor(this.position.x), Math.floor(this.position.y + 0.7), Math.floor(this.position.z));
+            this.inWater = (guardFeetBlock === BlockType.WATER || guardBodyBlock === BlockType.WATER);
+
+            // Gravity / Swimming for car guards
+            if (this.inWater) {
+                this.swimBobPhase += dt * 3;
+                this.velocity.y += -5.0 * dt;
+                if (this.position.y < WATER_LEVEL) {
+                    const submersion = Math.min(1.0, (WATER_LEVEL - this.position.y) / 1.5);
+                    this.velocity.y += 24.0 * submersion * dt;
+                }
+                this.velocity.y *= 0.92;
+                this.velocity.x *= 0.85;
+                this.velocity.z *= 0.85;
+                this.velocity.y = Math.max(-4, Math.min(4, this.velocity.y));
+            } else {
+                this.velocity.y += this.gravity * dt;
+                if (this.velocity.y < -50) this.velocity.y = -50;
+            }
+
+            // Stay near guard position - patrol within ~5 blocks of the car
+            const distToGuardPos = this.position.distanceTo(this.guardPosition);
+            const guardPatrolRange = 5.0;
+
+            if (distToGuardPos > guardPatrolRange) {
+                // Too far from guard post - move back
+                const toGuard = new THREE.Vector3().subVectors(this.guardPosition, this.position);
+                toGuard.y = 0;
+                toGuard.normalize();
+                this.velocity.x = toGuard.x * this.speed * 1.2;
+                this.velocity.z = toGuard.z * this.speed * 1.2;
+                this.mesh.rotation.y = Math.atan2(toGuard.x, toGuard.z);
+            } else if (this.currentTarget && this.currentTarget.alive) {
+                // Face current target while shooting
+                const toTarget = new THREE.Vector3().subVectors(this.currentTarget.position, this.position);
+                toTarget.y = 0;
+                if (toTarget.length() > 0.1) {
+                    this.mesh.rotation.y = Math.atan2(toTarget.x, toTarget.z);
+                }
+                this.velocity.x = 0;
+                this.velocity.z = 0;
+            } else {
+                // Small patrol wander near guard position
+                this.wanderTimer -= dt;
+                if (this.wanderTimer <= 0) {
+                    const angle = Math.random() * Math.PI * 2;
+                    this.wanderDir.set(Math.cos(angle), 0, Math.sin(angle));
+                    this.wanderTimer = 2 + Math.random() * 3;
+                }
+                this.velocity.x = this.wanderDir.x * this.speed * 0.3;
+                this.velocity.z = this.wanderDir.z * this.speed * 0.3;
+                this.mesh.rotation.y = Math.atan2(this.wanderDir.x, this.wanderDir.z);
+            }
+
+            // Apply movement with collision
+            const oldGuardPos = this.position.clone();
+            this.position.x += this.velocity.x * dt;
+            if (this.checkCollision()) {
+                this.position.x = oldGuardPos.x;
+                if (this.onGround) { this.velocity.y = 7; this.onGround = false; }
+            }
+            this.position.y += this.velocity.y * dt;
+            if (this.checkCollision()) {
+                if (this.velocity.y < 0) {
+                    this.position.y = Math.floor(this.position.y - 0.01) + 1.001;
+                    this.onGround = true;
+                } else { this.position.y = oldGuardPos.y; }
+                this.velocity.y = 0;
+            } else { this.onGround = false; }
+            this.position.z += this.velocity.z * dt;
+            if (this.checkCollision()) {
+                this.position.z = oldGuardPos.z;
+                if (this.onGround) { this.velocity.y = 7; this.onGround = false; }
+            }
+
+            if (this.position.y < -10) this.position.y = 50;
+
+            // Run combat AI - suppressing fire!
+            this.updateCombat(dt);
+
+            // Update mesh position with idle sway
+            this.mesh.position.copy(this.position);
+            if (this.inWater) {
+                const swimBob = Math.sin(this.swimBobPhase) * 0.18;
+                this.mesh.position.y += swimBob;
+                this.mesh.rotation.x = Math.sin(this.swimBobPhase * 0.7) * 0.1;
+                this.mesh.rotation.z = Math.sin(this.swimBobPhase * 0.5) * 0.08;
+            } else {
+                const sway = Math.sin(this.dancePhase) * 0.04;
+                this.mesh.rotation.z = sway;
+                this.mesh.rotation.x = 0;
+                this.mesh.position.y += Math.abs(Math.sin(this.dancePhase * 1.5)) * 0.03;
+            }
+            return;
+        }
+
         // Collected strippers are hidden - skip all physics/movement
         if (this.collected) {
             // Just keep position near player so they don't despawn
@@ -828,8 +940,8 @@ class StripperSpawner {
         for (let i = this.strippers.length - 1; i >= 0; i--) {
             const s = this.strippers[i];
             s.update(dt, playerPos);
-            // Don't despawn strippers that are riding in the car, hired, or collected
-            if (!s.inCar && !s.hired && !s.collected && s.position.distanceTo(playerPos) > 100) {
+            // Don't despawn strippers that are riding in the car, hired, collected, or guarding the car
+            if (!s.inCar && !s.hired && !s.collected && !s.guardingCar && s.position.distanceTo(playerPos) > 100) {
                 s.dispose();
                 this.strippers.splice(i, 1);
             }

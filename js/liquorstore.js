@@ -674,16 +674,38 @@ class LiquorStore {
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, 256, 32);
 
-        const tickerText = '  BTC $69,420 ▲  ETH $4,200 ▲  DOGE $0.69 ▲  SOL $420 ▲  ';
         ctx.font = 'bold 16px monospace';
-        ctx.fillStyle = '#00ff44';
-        ctx.shadowColor = '#00ff44';
         ctx.shadowBlur = 4;
 
-        const textWidth = ctx.measureText(tickerText).width;
-        const x = -this.tickerOffset % textWidth;
-        ctx.fillText(tickerText, x, 22);
-        ctx.fillText(tickerText, x + textWidth, 22);
+        // Use real crypto prices from CoinGecko if available
+        const fetcher = window.cryptoPriceFetcher;
+        if (fetcher && fetcher.initialized) {
+            const segments = fetcher.getTickerSegments();
+            // Build full ticker text to measure total width
+            const fullText = segments.map(s => s.text).join('');
+            const textWidth = ctx.measureText(fullText).width || 400;
+            const x = -this.tickerOffset % textWidth;
+
+            // Draw two copies for seamless scrolling, with per-coin colors
+            for (let copy = 0; copy < 2; copy++) {
+                let cursorX = x + copy * textWidth;
+                for (const seg of segments) {
+                    ctx.fillStyle = seg.color;
+                    ctx.shadowColor = seg.color;
+                    ctx.fillText(seg.text, cursorX, 22);
+                    cursorX += ctx.measureText(seg.text).width;
+                }
+            }
+        } else {
+            // Fallback: static meme prices while API loads
+            const tickerText = '  BTC $69,420 ▲  ETH $4,200 ▲  DOGE $0.69 ▲  SOL $420 ▲  ';
+            ctx.fillStyle = '#00ff44';
+            ctx.shadowColor = '#00ff44';
+            const textWidth = ctx.measureText(tickerText).width;
+            const x = -this.tickerOffset % textWidth;
+            ctx.fillText(tickerText, x, 22);
+            ctx.fillText(tickerText, x + textWidth, 22);
+        }
 
         if (this.tickerTexture) {
             this.tickerTexture.needsUpdate = true;
@@ -736,7 +758,8 @@ class LiquorStore {
                 { key: '1', name: 'Bitcoin Beer', emoji: '🍺', price: 10, heal: 3, effect: null, desc: 'Heals 3 HP' },
                 { key: '2', name: 'Ethereum Whiskey', emoji: '🥃', price: 25, heal: 8, effect: 'speed', desc: 'Heals 8 HP + Speed boost' },
                 { key: '3', name: 'Doge Champagne', emoji: '🍾', price: 50, heal: 20, effect: 'strippers', desc: 'Full heal + Spawns strippers' },
-                { key: '4', name: 'Shitcoin Moonshine', emoji: '🧪', price: 15, heal: 5, effect: 'high', desc: 'Heals 5 HP + Gets you high' }
+                { key: '4', name: 'Shitcoin Moonshine', emoji: '🧪', price: 15, heal: 5, effect: 'high', desc: 'Heals 5 HP + Gets you high' },
+                { key: '5', name: 'STRIP CLUB', emoji: '🏪', price: 1500, heal: 0, effect: 'stripclub', desc: 'Buy a strip club! Deposits all strippers as score' }
             ];
         }
         return LiquorStore._menuItems;

@@ -559,7 +559,7 @@ class CrackheadSpawner {
         if (!this.stripperSpawner) return 0;
         let count = 0;
         for (const s of this.stripperSpawner.strippers) {
-            if (s.alive && (s.hired || s.collected || s.inCar)) count++;
+            if (s.alive && (s.hired || s.collected || s.inCar || s.guardingCar)) count++;
         }
         return count;
     }

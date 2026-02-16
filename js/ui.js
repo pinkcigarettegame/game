@@ -102,7 +102,7 @@ class UI {
         let collectedCount = 0;
         if (stripperSpawner) {
             for (const s of stripperSpawner.strippers) {
-                if (s.alive && (s.collected || s.inCar)) collectedCount++;
+                if (s.alive && (s.collected || s.inCar || s.guardingCar)) collectedCount++;
             }
         }
 

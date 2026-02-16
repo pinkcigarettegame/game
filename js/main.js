@@ -7,6 +7,8 @@
     let world, player, input, ui, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner;
     let healthPotionSpawner;
     let liquorStoreSpawner;
+    let billboardSpawner;
+    let stripClubManager;
     let glock;
     let challenger; // Pimp Dodge Challenger
     let clock;
@@ -31,7 +33,26 @@
     const STRIPPER_INVITE_COST = 50; // Cost to invite a stripper into the car
     const STRIPPER_ARM_COST = 100; // Cost to arm a stripper with a glock
     let inviteCooldown = 0; // Cooldown between invite attempts
+    let hookerCombo = 0; // Combo counter for rapid hooker invites
+    let hookerComboTimer = 0; // Timer - combo resets when this hits 0
+    const HOOKER_COMBO_WINDOW = 5; // Seconds to keep combo alive
     let carHitCooldown = 0; // Cooldown to prevent multi-hits on same frame
+    let impactDrag = 0; // Smooth deceleration from NPC impacts
+
+    // === GLOBAL PARTICLE PERFORMANCE CAPS ===
+    const particleCaps = {
+        bloodParticles: { active: 0, max: 120 },   // Blood spray meshes
+        gibs: { active: 0, max: 20 },               // Body chunk gibs
+        streaks: { active: 0, max: 15 },             // Ground blood streaks
+        pools: { active: 0, max: 8 },                // Blood pools
+        ragdolls: { active: 0, max: 4 },             // Flying ragdoll bodies
+        screenSplats: { active: 0, max: 6 },         // DOM screen blood splatters
+        dollarBills: { active: 0, max: 8 },          // DOM dollar bill elements
+        tracers: { active: 0, max: 12 },             // Gun tracer lines
+        miniSplats: { active: 0, max: 10 },          // Mini blood splats from gibs
+    };
+    // Make globally accessible for other files
+    window.particleCaps = particleCaps;
 
     // Shared AudioContext for performance (avoid creating new ones per sound)
     let sharedAudioCtx = null;
@@ -143,6 +164,14 @@
         crackheadSpawner.stripperSpawner = stripperSpawner;
         stripperSpawner.copSpawner = copSpawner;
 
+        // Spawn strip club manager
+        stripClubManager = new StripClubManager(world, scene);
+
+        // Start fetching real crypto prices for liquor store tickers
+        if (window.cryptoPriceFetcher) {
+            window.cryptoPriceFetcher.start();
+        }
+
         // Spawn crypto liquor store system
         liquorStoreSpawner = new LiquorStoreSpawner(world, scene);
         liquorStoreSpawner.player = player;
@@ -158,6 +187,11 @@
             world.update(player.position.x, player.position.z);
             player.updateCamera();
         }
+
+        // Spawn crypto billboard system
+        billboardSpawner = new BillboardSpawner(world, scene);
+        // Expose liquorStoreSpawner globally so billboards can check distance
+        window.liquorStoreSpawner = liquorStoreSpawner;
 
         // Spawn the pimp Dodge Challenger in the parking lot
         spawnChallenger();
@@ -543,6 +577,15 @@
             // Update speed display and passenger count
             updateDrivingHUD();
             
+            // === HOOKER COMBO TIMER DECAY ===
+            if (hookerComboTimer > 0) {
+                hookerComboTimer -= dt;
+                if (hookerComboTimer <= 0) {
+                    hookerCombo = 0; // Combo expired!
+                    hookerComboTimer = 0;
+                }
+            }
+
             // === M KEY: Money spread to invite strippers while driving ===
             inviteCooldown = Math.max(0, inviteCooldown - dt);
             const mKeyDown = input.keys['KeyM'];
@@ -573,6 +616,12 @@
 
             // Update liquor stores while driving
             if (liquorStoreSpawner) liquorStoreSpawner.update(dt, challenger.position);
+
+            // Update strip clubs while driving
+            if (stripClubManager) stripClubManager.update(dt, challenger.position);
+
+            // Update crypto billboards while driving
+            if (billboardSpawner) billboardSpawner.update(dt, challenger.position);
             
             // === CHECK CAR-NPC COLLISIONS (roadkill!) ===
             checkCarNPCCollisions(dt);
@@ -613,6 +662,9 @@
             ui.update(dt, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, glock);
             if (glock) glock.update(dt);
             if (healthPotionSpawner) healthPotionSpawner.update(dt, player.position);
+
+            // Update crypto billboards during money spread
+            if (billboardSpawner) billboardSpawner.update(dt, player.position);
             
             // Consume mouse input so it doesn't accumulate
             input.mouseDX = 0;
@@ -674,10 +726,16 @@
 
             // Update liquor stores on foot
             if (liquorStoreSpawner) liquorStoreSpawner.update(dt, player.position);
+
+            // Update strip clubs on foot
+            if (stripClubManager) stripClubManager.update(dt, player.position);
+
+            // Update crypto billboards on foot
+            if (billboardSpawner) billboardSpawner.update(dt, player.position);
         }
 
-        // === B KEY: Open/Close Crypto Liquor Store Shop ===
-        const bKeyDown = input.keys['KeyB'];
+        // === V KEY: Open/Close Crypto Liquor Store Shop ===
+        const bKeyDown = input.keys['KeyV'];
         if (bKeyDown && !bKeyWasDown) {
             if (shopMenuOpen) {
                 closeShopMenu();
@@ -706,8 +764,8 @@
             }
         }
 
-        // === ESC to close shop ===
-        if (shopMenuOpen && input.keys['Escape']) {
+        // === ESC to close shop (with delay guard to prevent instant close from pointer lock release) ===
+        if (shopMenuOpen && input.keys['Escape'] && (performance.now() - shopOpenTime > 500)) {
             closeShopMenu();
         }
 
@@ -906,12 +964,15 @@
         player.drivingCar = challenger;
         challenger.enter();
         
-        // Auto-board ALL collected/hired strippers (they teleport into the car)
+        // Auto-board ALL collected/hired/guarding strippers (they teleport into the car)
         if (stripperSpawner) {
             for (const s of stripperSpawner.strippers) {
                 if (!s.alive || s.inCar) continue;
-                if (!s.hired && !s.collected) continue; // Only board hired or collected strippers
+                if (!s.hired && !s.collected && !s.guardingCar) continue; // Only board hired, collected, or guarding strippers
                 s.collected = false; // No longer just collected - now actively in car
+                s.guardingCar = false; // No longer guarding - back in the car
+                s.guardPosition = null;
+                s.guardCarRef = null;
                 challenger.addPassenger(s); // addPassenger sets inCar=true, hired=true
                 
                 // Wire up combat references so strippers can shoot from the car
@@ -1084,9 +1145,9 @@
 
         // Check if player has enough money
         if (glock.money < STRIPPER_INVITE_COST) {
-            // YOU BROKE! 
             showBrokeMessage();
             playBrokeSound();
+            hookerCombo = 0; // Reset combo on broke
             return;
         }
 
@@ -1094,7 +1155,7 @@
         let nearestStripper = null;
         let nearestDist = Infinity;
         for (const s of stripperSpawner.strippers) {
-            if (!s.alive || s.inCar || s.hired) continue; // Skip hired strippers - they're already yours
+            if (!s.alive || s.inCar || s.hired) continue;
             const dist = s.position.distanceTo(challenger.position);
             if (dist < STRIPPER_INVITE_RANGE && dist < nearestDist) {
                 nearestDist = dist;
@@ -1103,7 +1164,6 @@
         }
 
         if (!nearestStripper) {
-            // No strippers nearby - show a different message
             showNoStrippersMessage();
             return;
         }
@@ -1111,28 +1171,61 @@
         // Success! Deduct money and add stripper to car
         glock.money -= STRIPPER_INVITE_COST;
         
-        // Play money spread animation
+        // Play sound (reduced particles for performance - only 2 bills instead of 8)
         glock.playMoneyFlashSound();
-        for (let d = 0; d < 8; d++) {
-            setTimeout(() => glock.spawnDollarBill(), d * 60);
+        for (let d = 0; d < 2; d++) {
+            setTimeout(() => glock.spawnDollarBill(), d * 100);
         }
 
         // Stripper squeals excitedly and gets in
         nearestStripper.playSqueal();
         challenger.addPassenger(nearestStripper);
 
-        // Wire up references for hired stripper (combat + line-of-fire avoidance)
+        // Wire up references for hired stripper
         nearestStripper.crackheadSpawner = crackheadSpawner;
         nearestStripper.copSpawner = copSpawner;
         nearestStripper.glockRef = glock;
         nearestStripper.playerRef = player;
         nearestStripper.cameraRef = camera;
-
-        // Auto-equip with a glock when invited
         nearestStripper.equipGlock();
 
-        // Show success message
-        showInviteMessage(challenger.getPassengerCount());
+        // === COMBO COUNTER ===
+        hookerCombo++;
+        hookerComboTimer = HOOKER_COMBO_WINDOW; // Reset combo timer
+        showComboMessage(hookerCombo, challenger.getPassengerCount());
+    }
+
+    function showComboMessage(combo, totalInCar) {
+        const inviteMsg = document.getElementById('invite-message');
+        if (!inviteMsg) return;
+
+        let text;
+        if (combo % 10 === 0 && combo >= 10) {
+            // Milestone every 10!
+            const milestones = {
+                10: '🔥🔥 10x COMBO! PIMP STATUS! 🔥🔥',
+                20: '💎💎 20x COMBO! LEGENDARY PIMP! 💎💎',
+                30: '👑👑 30x COMBO! PIMP KING! 👑👑',
+                40: '🌟🌟 40x COMBO! PIMP GOD! 🌟🌟',
+                50: '💀💀 50x COMBO! UNSTOPPABLE! 💀💀'
+            };
+            text = milestones[combo] || `🏆🏆 ${combo}x COMBO! ABSOLUTE LEGEND! 🏆🏆`;
+        } else {
+            text = `💃 x${combo} COMBO! -$50 💸 (${totalInCar} in car)`;
+        }
+
+        inviteMsg.textContent = text;
+        inviteMsg.classList.remove('active');
+        inviteMsg.style.display = 'none';
+        void inviteMsg.offsetWidth;
+        inviteMsg.style.display = 'block';
+        inviteMsg.classList.add('active');
+
+        const duration = (combo % 10 === 0 && combo >= 10) ? 3500 : 2000;
+        setTimeout(() => {
+            inviteMsg.classList.remove('active');
+            inviteMsg.style.display = 'none';
+        }, duration);
     }
 
     function showBrokeMessage() {
@@ -1357,11 +1450,10 @@
                 const cat = catSpawner.cats[i];
                 if (!cat.alive || cat.exploding) continue;
                 if (challenger.isPointInCarBounds(cat.position)) {
-                    // Kill the cat instantly (don't let it explode - just remove it)
                     cat.alive = false;
-                    cat.dispose();
-                    catSpawner.cats.splice(i, 1);
                     spawnCarBloodEffect(cat.position);
+                    launchNPCRagdoll(cat.mesh, cat.position, carSpeed);
+                    catSpawner.cats.splice(i, 1);
                     hitSomething = true;
                     hitCount++;
                 }
@@ -1375,12 +1467,11 @@
                 if (!bm.alive) continue;
                 if (challenger.isPointInCarBounds(bm.position)) {
                     bm.alive = false;
-                    bm.dispose();
-                    bongManSpawner.bongMen.splice(i, 1);
                     spawnCarBloodEffect(bm.position);
+                    launchNPCRagdoll(bm.mesh, bm.position, carSpeed);
+                    bongManSpawner.bongMen.splice(i, 1);
                     hitSomething = true;
                     hitCount++;
-                    // Running over civilians = wanted!
                     if (copSpawner) copSpawner.addWanted(1);
                 }
             }
@@ -1390,15 +1481,14 @@
         if (stripperSpawner && stripperSpawner.strippers) {
             for (let i = stripperSpawner.strippers.length - 1; i >= 0; i--) {
                 const s = stripperSpawner.strippers[i];
-                if (!s.alive || s.inCar || s.hired || s.collected) continue;
+                if (!s.alive || s.inCar || s.hired || s.collected || s.guardingCar) continue;
                 if (challenger.isPointInCarBounds(s.position)) {
                     s.alive = false;
-                    s.dispose();
-                    stripperSpawner.strippers.splice(i, 1);
                     spawnCarBloodEffect(s.position);
+                    launchNPCRagdoll(s.mesh, s.position, carSpeed);
+                    stripperSpawner.strippers.splice(i, 1);
                     hitSomething = true;
                     hitCount++;
-                    // Running over civilians = wanted!
                     if (copSpawner) copSpawner.addWanted(1);
                 }
             }
@@ -1411,15 +1501,54 @@
                 if (!ch.alive) continue;
                 if (challenger.isPointInCarBounds(ch.position)) {
                     ch.alive = false;
-                    ch.dispose();
-                    crackheadSpawner.crackheads.splice(i, 1);
                     spawnCarBloodEffect(ch.position);
+                    launchNPCRagdoll(ch.mesh, ch.position, carSpeed);
+                    crackheadSpawner.crackheads.splice(i, 1);
                     hitSomething = true;
                     hitCount++;
-                    // Earn money for crackhead kills
                     if (glock) {
                         glock.money += 2;
                         glock.spawnDollarBill();
+                    }
+                }
+            }
+        }
+
+        // --- Check Police Motorcycles ---
+        if (copSpawner && copSpawner.motorcycles) {
+            for (let i = copSpawner.motorcycles.length - 1; i >= 0; i--) {
+                const moto = copSpawner.motorcycles[i];
+                if (!moto.alive) continue;
+                if (challenger.isPointInCarBounds(moto.position, 0.5)) {
+                    if (carSpeed >= MIN_KILL_SPEED) {
+                        moto.alive = false;
+                        spawnCarBloodEffect(moto.position);
+                        launchNPCRagdoll(moto.mesh, moto.position, carSpeed);
+                        copSpawner.motorcycles.splice(i, 1);
+                        hitSomething = true;
+                        hitCount++;
+                        if (glock) {
+                            glock.money += 15;
+                            glock.spawnDollarBill();
+                        }
+                        if (copSpawner) copSpawner.addWanted(2);
+                    } else {
+                        // Low speed - damage the motorcycle cop
+                        moto.health -= Math.ceil(carSpeed * 4);
+                        spawnCarBloodEffect(moto.position);
+                        hitSomething = true;
+                        if (moto.health <= 0) {
+                            moto.alive = false;
+                            launchNPCRagdoll(moto.mesh, moto.position, carSpeed);
+                            copSpawner.motorcycles.splice(i, 1);
+                            if (glock) {
+                                glock.money += 15;
+                                glock.spawnDollarBill();
+                            }
+                            if (copSpawner) copSpawner.addWanted(2);
+                        } else {
+                            if (copSpawner) copSpawner.addWanted(1);
+                        }
                     }
                 }
             }
@@ -1431,44 +1560,40 @@
                 const cop = copSpawner.cops[i];
                 if (!cop.alive) continue;
                 if (challenger.isPointInCarBounds(cop.position)) {
-                    // Cops are tougher - need higher speed to one-shot
                     if (carSpeed >= MIN_KILL_SPEED) {
                         cop.alive = false;
-                        cop.dispose();
-                        copSpawner.cops.splice(i, 1);
                         spawnCarBloodEffect(cop.position);
+                        launchNPCRagdoll(cop.mesh, cop.position, carSpeed);
+                        copSpawner.cops.splice(i, 1);
                         hitSomething = true;
                         hitCount++;
-                        // Earn money but get more wanted
                         if (glock) {
                             glock.money += 10;
-                            for (let d = 0; d < 5; d++) {
-                                setTimeout(() => glock.spawnDollarBill(), d * 80);
-                            }
+                            // Reduced from 5 to 1 bill for performance
+                            glock.spawnDollarBill();
                         }
                         if (copSpawner) copSpawner.addWanted(2);
                     } else {
-                        // Low speed - just damage the cop and push them
+                        // Low speed - push them with smooth physics
                         cop.health -= Math.ceil(carSpeed * 3);
                         const pushDir = new THREE.Vector3(
                             -Math.sin(challenger.rotation),
                             0.5,
                             -Math.cos(challenger.rotation)
                         );
-                        cop.position.add(pushDir.multiplyScalar(2));
+                        cop.position.add(pushDir.clone().multiplyScalar(2));
                         cop.velocity.copy(pushDir.normalize().multiplyScalar(carSpeed * 2));
                         cop.velocity.y = 5;
                         spawnCarBloodEffect(cop.position);
                         hitSomething = true;
                         if (cop.health <= 0) {
                             cop.alive = false;
-                            cop.dispose();
+                            launchNPCRagdoll(cop.mesh, cop.position, carSpeed);
                             copSpawner.cops.splice(i, 1);
                             if (glock) {
                                 glock.money += 10;
-                                for (let d = 0; d < 5; d++) {
-                                    setTimeout(() => glock.spawnDollarBill(), d * 80);
-                                }
+                                // Reduced from 5 to 1 bill for performance
+                                glock.spawnDollarBill();
                             }
                             if (copSpawner) copSpawner.addWanted(2);
                         } else {
@@ -1484,82 +1609,194 @@
             playCarImpactSound(hitCount);
             shakeCarCamera(hitCount);
             showRunoverMessage(hitCount);
-            // Slow the car down on impact
-            const speedReduction = Math.min(carSpeed * 0.3, 2 + hitCount);
-            if (challenger.speed > 0) {
-                challenger.speed = Math.max(0, challenger.speed - speedReduction);
-            } else {
-                challenger.speed = Math.min(0, challenger.speed + speedReduction);
-            }
+            // No car slowdown - plow right through!
         }
     }
 
     function spawnCarBloodEffect(hitPos) {
         const pos = hitPos.clone();
         pos.y += 0.5;
+        const carDir = challenger ? challenger.rotation : 0;
+        const carSpeed = challenger ? Math.abs(challenger.speed) : 5;
+        const speedMult = Math.min(2.5, carSpeed / 8); // More speed = more gore
 
-        // Blood splatter particles
-        for (let i = 0; i < 12; i++) {
-            const size = 0.05 + Math.random() * 0.15;
-            const geo = new THREE.BoxGeometry(size, size, size);
-            const shade = 0.4 + Math.random() * 0.6;
+        // === 1. BLOOD SPRAY (capped for performance) ===
+        const wantedParticles = Math.floor(30 + speedMult * 30);
+        const particleCount = Math.min(wantedParticles, particleCaps.bloodParticles.max - particleCaps.bloodParticles.active);
+        for (let i = 0; i < particleCount; i++) {
+            particleCaps.bloodParticles.active++;
+            const size = 0.12 + Math.random() * 0.6 * speedMult;
+            const geo = new THREE.BoxGeometry(size, size * (0.5 + Math.random()), size);
+            const shade = 0.3 + Math.random() * 0.7;
             const mat = new THREE.MeshBasicMaterial({
-                color: new THREE.Color(shade, 0, 0),
+                color: new THREE.Color(shade, Math.random() * 0.05, Math.random() * 0.02),
                 transparent: true,
-                opacity: 0.9
+                opacity: 0.95
             });
             const blood = new THREE.Mesh(geo, mat);
             blood.position.copy(pos);
+            blood.position.x += (Math.random() - 0.5) * 0.5;
+            blood.position.y += (Math.random() - 0.5) * 0.8;
+            blood.position.z += (Math.random() - 0.5) * 0.5;
 
-            // Spray in car's forward direction + random spread
-            const carDir = challenger ? challenger.rotation : 0;
-            const spreadAngle = (Math.random() - 0.5) * Math.PI;
+            // Spray in car's forward direction + wide random spread
+            const spreadAngle = (Math.random() - 0.5) * Math.PI * 1.4;
             const angle = carDir + spreadAngle;
-            const speed = 3 + Math.random() * 8;
-            const vx = -Math.sin(angle) * speed;
-            const vy = 2 + Math.random() * 6;
-            const vz = -Math.cos(angle) * speed;
+            const speed = (2 + Math.random() * 12) * speedMult;
+            const vx = -Math.sin(angle) * speed + (Math.random() - 0.5) * 4;
+            const vy = 1 + Math.random() * 8 * speedMult;
+            const vz = -Math.cos(angle) * speed + (Math.random() - 0.5) * 4;
+            const spinX = (Math.random() - 0.5) * 15;
+            const spinZ = (Math.random() - 0.5) * 15;
+            const gravity = -12 - Math.random() * 8;
 
             scene.add(blood);
 
             let frame = 0;
+            let velY = vy;
+            const maxFrames = 40 + Math.floor(Math.random() * 20);
             const animateBlood = () => {
                 frame++;
+                velY += gravity * 0.016;
                 blood.position.x += vx * 0.016;
-                blood.position.y += (vy - frame * 0.4) * 0.016;
+                blood.position.y += velY * 0.016;
                 blood.position.z += vz * 0.016;
-                blood.rotation.x += 0.1;
-                blood.rotation.z += 0.15;
-                mat.opacity = Math.max(0, 0.9 - frame / 30);
-                if (frame < 35) {
+                blood.rotation.x += spinX * 0.016;
+                blood.rotation.z += spinZ * 0.016;
+                mat.opacity = Math.max(0, 0.95 - frame / maxFrames);
+                // Scale down as they fade
+                const s = Math.max(0.3, 1 - frame / maxFrames * 0.5);
+                blood.scale.set(s, s, s);
+                if (frame < maxFrames && mat.opacity > 0) {
                     requestAnimationFrame(animateBlood);
                 } else {
                     scene.remove(blood);
                     geo.dispose();
                     mat.dispose();
+                    particleCaps.bloodParticles.active = Math.max(0, particleCaps.bloodParticles.active - 1);
                 }
             };
             requestAnimationFrame(animateBlood);
         }
 
-        // Ground blood pool (flat red disc that fades)
-        const poolGeo = new THREE.BoxGeometry(1.5, 0.02, 1.5);
+        // === 2. BODY CHUNK GIBS (capped for performance) ===
+        const wantedGibs = Math.floor(4 + speedMult * 4);
+        const gibCount = Math.min(wantedGibs, particleCaps.gibs.max - particleCaps.gibs.active);
+        const gibColors = [0x882222, 0xaa3333, 0x661111, 0xcc8866, 0x993322, 0x774444];
+        for (let i = 0; i < gibCount; i++) {
+            const gw = 0.15 + Math.random() * 0.45;
+            const gh = 0.12 + Math.random() * 0.35;
+            const gd = 0.15 + Math.random() * 0.4;
+            const gGeo = new THREE.BoxGeometry(gw, gh, gd);
+            const gMat = new THREE.MeshLambertMaterial({
+                color: gibColors[Math.floor(Math.random() * gibColors.length)],
+                transparent: true,
+                opacity: 1.0
+            });
+            const gib = new THREE.Mesh(gGeo, gMat);
+            gib.position.copy(pos);
+
+            const spreadAngle = (Math.random() - 0.5) * Math.PI;
+            const angle = carDir + spreadAngle;
+            const speed = (5 + Math.random() * 10) * speedMult;
+            const gvx = -Math.sin(angle) * speed;
+            let gvy = 3 + Math.random() * 10 * speedMult;
+            const gvz = -Math.cos(angle) * speed;
+            const gSpinX = (Math.random() - 0.5) * 20;
+            const gSpinY = (Math.random() - 0.5) * 20;
+            const gSpinZ = (Math.random() - 0.5) * 20;
+
+            scene.add(gib);
+
+            let gFrame = 0;
+            let bounced = false;
+            const animateGib = () => {
+                gFrame++;
+                gvy -= 20 * 0.016; // gravity
+                gib.position.x += gvx * 0.016;
+                gib.position.y += gvy * 0.016;
+                gib.position.z += gvz * 0.016;
+                gib.rotation.x += gSpinX * 0.016;
+                gib.rotation.y += gSpinY * 0.016;
+                gib.rotation.z += gSpinZ * 0.016;
+
+                // Bounce off ground
+                if (gib.position.y < pos.y - 0.4 && gvy < 0 && !bounced) {
+                    gvy = Math.abs(gvy) * 0.3;
+                    bounced = true;
+                    // Spawn small blood splat where gib lands
+                    spawnMiniBloodSplat(gib.position.clone());
+                }
+
+                gMat.opacity = Math.max(0, 1.0 - gFrame / 80);
+                if (gFrame < 80 && gMat.opacity > 0) {
+                    requestAnimationFrame(animateGib);
+                } else {
+                    scene.remove(gib);
+                    gGeo.dispose();
+                    gMat.dispose();
+                }
+            };
+            requestAnimationFrame(animateGib);
+        }
+
+        // === 3. BLOOD STREAKS ON GROUND (directional smears) ===
+        const streakCount = 5 + Math.floor(speedMult * 5);
+        for (let i = 0; i < streakCount; i++) {
+            const sLen = 2.0 + Math.random() * 6.0 * speedMult;
+            const sWid = 0.3 + Math.random() * 0.8;
+            const sGeo = new THREE.BoxGeometry(sWid, 0.02, sLen);
+            const sShade = 0.3 + Math.random() * 0.4;
+            const sMat = new THREE.MeshBasicMaterial({
+                color: new THREE.Color(sShade, 0, 0),
+                transparent: true,
+                opacity: 0.7
+            });
+            const streak = new THREE.Mesh(sGeo, sMat);
+            const sAngle = carDir + (Math.random() - 0.5) * 0.8;
+            const sDist = Math.random() * 2 * speedMult;
+            streak.position.set(
+                pos.x - Math.sin(sAngle) * sDist + (Math.random() - 0.5) * 1.5,
+                pos.y - 0.45,
+                pos.z - Math.cos(sAngle) * sDist + (Math.random() - 0.5) * 1.5
+            );
+            streak.rotation.y = sAngle + (Math.random() - 0.5) * 0.3;
+            scene.add(streak);
+
+            let sFrame = 0;
+            const animateStreak = () => {
+                sFrame++;
+                sMat.opacity = Math.max(0, 0.7 - sFrame / 200);
+                if (sFrame < 200) {
+                    requestAnimationFrame(animateStreak);
+                } else {
+                    scene.remove(streak);
+                    sGeo.dispose();
+                    sMat.dispose();
+                }
+            };
+            requestAnimationFrame(animateStreak);
+        }
+
+        // === 4. LARGE BLOOD POOL (expanding, darker) ===
+        const poolGeo = new THREE.BoxGeometry(3.5, 0.02, 3.5);
         const poolMat = new THREE.MeshBasicMaterial({
-            color: 0x880000,
+            color: 0x660000,
             transparent: true,
-            opacity: 0.6
+            opacity: 0.75
         });
         const pool = new THREE.Mesh(poolGeo, poolMat);
-        pool.position.set(pos.x, pos.y - 0.3, pos.z);
+        pool.position.set(pos.x, pos.y - 0.45, pos.z);
         scene.add(pool);
 
         let poolFrame = 0;
         const animatePool = () => {
             poolFrame++;
-            poolMat.opacity = Math.max(0, 0.6 - poolFrame / 120);
-            const scale = 1 + poolFrame * 0.02;
-            pool.scale.set(scale, 1, scale);
-            if (poolFrame < 120) {
+            // Expand quickly then slow
+            const scale = 1 + Math.min(poolFrame * 0.08, 2.5 * speedMult);
+            pool.scale.set(scale, 1, scale * (0.6 + speedMult * 0.3));
+            poolMat.opacity = Math.max(0, 0.75 - poolFrame / 250);
+            if (poolFrame < 250) {
                 requestAnimationFrame(animatePool);
             } else {
                 scene.remove(pool);
@@ -1568,6 +1805,185 @@
             }
         };
         requestAnimationFrame(animatePool);
+
+        // === 5. SCREEN BLOOD SPLATTER (DOM overlay) ===
+        spawnScreenBloodSplatter(speedMult);
+    }
+
+    // Mini blood splat where gibs land
+    function spawnMiniBloodSplat(pos) {
+        const sGeo = new THREE.BoxGeometry(0.3 + Math.random() * 0.4, 0.015, 0.3 + Math.random() * 0.4);
+        const sMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0.4 + Math.random() * 0.3, 0, 0),
+            transparent: true,
+            opacity: 0.6
+        });
+        const splat = new THREE.Mesh(sGeo, sMat);
+        splat.position.copy(pos);
+        splat.position.y = pos.y - 0.2;
+        splat.rotation.y = Math.random() * Math.PI * 2;
+        scene.add(splat);
+
+        let f = 0;
+        const anim = () => {
+            f++;
+            sMat.opacity = Math.max(0, 0.6 - f / 180);
+            if (f < 180) {
+                requestAnimationFrame(anim);
+            } else {
+                scene.remove(splat);
+                sGeo.dispose();
+                sMat.dispose();
+            }
+        };
+        requestAnimationFrame(anim);
+    }
+
+    // Screen blood splatter overlay (red splotches on screen edges)
+    function spawnScreenBloodSplatter(intensity) {
+        const splatCount = Math.floor(4 + intensity * 5);
+        for (let i = 0; i < splatCount; i++) {
+            const splat = document.createElement('div');
+            const size = 80 + Math.random() * 250 * intensity;
+            // Position on screen edges (more cinematic)
+            const edge = Math.floor(Math.random() * 4);
+            let left, top;
+            switch(edge) {
+                case 0: left = Math.random() * 30; top = Math.random() * 100; break; // left
+                case 1: left = 70 + Math.random() * 30; top = Math.random() * 100; break; // right
+                case 2: left = Math.random() * 100; top = Math.random() * 25; break; // top
+                case 3: left = Math.random() * 100; top = 75 + Math.random() * 25; break; // bottom
+            }
+            const r = 120 + Math.floor(Math.random() * 80);
+            splat.style.cssText = `
+                position: fixed;
+                left: ${left}%;
+                top: ${top}%;
+                width: ${size}px;
+                height: ${size}px;
+                background: radial-gradient(ellipse at center,
+                    rgba(${r}, 0, 0, 0.7) 0%,
+                    rgba(${r - 40}, 0, 0, 0.4) 30%,
+                    rgba(${r - 60}, 0, 0, 0.15) 60%,
+                    transparent 100%);
+                border-radius: ${30 + Math.random() * 40}% ${30 + Math.random() * 40}% ${30 + Math.random() * 40}% ${30 + Math.random() * 40}%;
+                pointer-events: none;
+                z-index: 350;
+                opacity: 1;
+                transform: rotate(${Math.random() * 360}deg) scale(${0.5 + Math.random() * 0.5});
+                transition: opacity ${1.5 + Math.random()}s ease-out;
+            `;
+            document.body.appendChild(splat);
+
+            // Drip effect - some splatters slide down
+            if (Math.random() < 0.4) {
+                const startTop = parseFloat(splat.style.top);
+                let dripFrame = 0;
+                const drip = () => {
+                    dripFrame++;
+                    splat.style.top = (startTop + dripFrame * 0.08) + '%';
+                    splat.style.height = (size + dripFrame * 0.5) + 'px';
+                    splat.style.width = (size - dripFrame * 0.2) + 'px';
+                    if (dripFrame < 40) requestAnimationFrame(drip);
+                };
+                requestAnimationFrame(drip);
+            }
+
+            // Fade out
+            setTimeout(() => {
+                splat.style.opacity = '0';
+                setTimeout(() => splat.remove(), 2000);
+            }, 500 + Math.random() * 1500);
+        }
+    }
+
+    // Launch NPC mesh as a ragdoll (smooth physics-based launch instead of instant disappear)
+    function launchNPCRagdoll(mesh, hitPos, carSpeed) {
+        if (!mesh || !challenger) return;
+        
+        // Detach mesh from any parent management - we'll animate it independently
+        // The NPC is already marked dead and removed from its spawner array
+        // but the mesh is still in the scene - we animate it flying through the air
+        
+        const carDir = challenger.rotation;
+        const speedMult = Math.min(2.5, carSpeed / 6);
+        
+        // Calculate launch velocity - forward + up + sideways tumble
+        const launchSpeed = (8 + carSpeed * 1.5) * speedMult;
+        let vx = -Math.sin(carDir) * launchSpeed + (Math.random() - 0.5) * 6;
+        let vy = 5 + Math.random() * 8 * speedMult; // Launch upward
+        let vz = -Math.cos(carDir) * launchSpeed + (Math.random() - 0.5) * 6;
+        
+        // Tumble spin speeds
+        const spinX = (Math.random() - 0.5) * 12;
+        const spinY = (Math.random() - 0.5) * 8;
+        const spinZ = (Math.random() - 0.5) * 12;
+        
+        const gravity = -20;
+        let frame = 0;
+        const maxFrames = 80; // ~1.3 seconds of ragdoll
+        let bounced = false;
+        const startY = mesh.position.y;
+        
+        const animateRagdoll = () => {
+            frame++;
+            
+            // Physics
+            vy += gravity * 0.016;
+            mesh.position.x += vx * 0.016;
+            mesh.position.y += vy * 0.016;
+            mesh.position.z += vz * 0.016;
+            
+            // Tumble rotation
+            mesh.rotation.x += spinX * 0.016;
+            mesh.rotation.y += spinY * 0.016;
+            mesh.rotation.z += spinZ * 0.016;
+            
+            // Air drag (slow down horizontal movement)
+            vx *= 0.995;
+            vz *= 0.995;
+            
+            // Ground bounce
+            if (mesh.position.y < startY - 0.5 && vy < 0 && !bounced) {
+                vy = Math.abs(vy) * 0.2; // Weak bounce
+                vx *= 0.5;
+                vz *= 0.5;
+                bounced = true;
+                // Spawn blood splat on landing
+                spawnMiniBloodSplat(mesh.position.clone());
+            }
+            
+            // Second ground contact - stop and fade
+            if (bounced && mesh.position.y < startY - 0.3 && vy < 0) {
+                mesh.position.y = startY - 0.3;
+                vy = 0;
+                vx *= 0.8;
+                vz *= 0.8;
+            }
+            
+            // Fade out in last 20 frames
+            if (frame > maxFrames - 20) {
+                const fadeProgress = (frame - (maxFrames - 20)) / 20;
+                mesh.traverse(child => {
+                    if (child.material && !child.material._ragdollFaded) {
+                        child.material.transparent = true;
+                        child.material.opacity = Math.max(0, 1 - fadeProgress);
+                    }
+                });
+            }
+            
+            if (frame < maxFrames) {
+                requestAnimationFrame(animateRagdoll);
+            } else {
+                // Clean up - remove mesh and dispose
+                scene.remove(mesh);
+                mesh.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
+            }
+        };
+        requestAnimationFrame(animateRagdoll);
     }
 
     function playCarImpactSound(hitCount) {
@@ -1687,12 +2103,15 @@
 
     // === CRYPTO LIQUOR STORE SHOP MENU ===
     let activeShopStore = null;
-    let shopKeyStates = { '1': false, '2': false, '3': false, '4': false };
+    let shopKeyStates = { '1': false, '2': false, '3': false, '4': false, '5': false };
+
+    let shopOpenTime = 0; // Track when shop was opened to prevent instant ESC close
 
     function openShopMenu(store) {
         if (shopMenuOpen) return;
         shopMenuOpen = true;
         activeShopStore = store;
+        shopOpenTime = performance.now();
 
         const menu = document.getElementById('shop-menu');
         if (!menu) return;
@@ -1746,53 +2165,149 @@
         const menu = document.getElementById('shop-menu');
         if (menu) menu.style.display = 'none';
 
-        // Re-lock pointer
-        if (input) input.requestPointerLock();
+        // Reset shop key states to prevent stuck keys
+        shopKeyStates = { '1': false, '2': false, '3': false, '4': false, '5': false };
+
+        // Clear ESC key state to prevent re-triggering
+        if (input) input.keys['Escape'] = false;
+
+        // Small delay before re-locking pointer to avoid browser ESC conflicts
+        setTimeout(() => {
+            if (input && !shopMenuOpen) input.requestPointerLock();
+        }, 100);
     }
 
     function handleShopInput() {
         if (!activeShopStore || !glock) return;
 
-        const keys = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
+        const keys = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'];
         for (let i = 0; i < keys.length; i++) {
             const keyDown = input.keys[keys[i]];
             const keyName = String(i + 1);
             if (keyDown && !shopKeyStates[keyName]) {
-                // Try to purchase
-                const success = activeShopStore.purchase(i, glock, player, stripperSpawner);
-
-                if (success) {
-                    // Check if moonshine (high effect)
-                    if (activeShopStore._lastPurchaseEffect === 'high') {
-                        highLevel = Math.min(1, highLevel + 0.6);
-                        activeShopStore._lastPurchaseEffect = null;
-                    }
-
-                    // Update the menu balance and item affordability
-                    const balanceEl = document.getElementById('shop-balance-amount');
-                    if (balanceEl) balanceEl.textContent = glock.money;
-
-                    const container = document.getElementById('shop-items-container');
-                    if (container) {
-                        const items = LiquorStore.getMenuItems();
-                        const itemDivs = container.querySelectorAll('.shop-item');
-                        itemDivs.forEach((div, idx) => {
-                            if (idx < items.length) {
-                                if (glock.money < items[idx].price) {
-                                    div.classList.add('cant-afford');
-                                } else {
-                                    div.classList.remove('cant-afford');
-                                }
-                            }
-                        });
-                    }
+                // Special handling for strip club (item 5)
+                if (i === 4) {
+                    handleStripClubPurchase();
                 } else {
-                    // Show broke message
-                    showBrokeMessage();
+                    // Try to purchase normal item
+                    const success = activeShopStore.purchase(i, glock, player, stripperSpawner);
+
+                    if (success) {
+                        // Check if moonshine (high effect)
+                        if (activeShopStore._lastPurchaseEffect === 'high') {
+                            highLevel = Math.min(1, highLevel + 0.6);
+                            activeShopStore._lastPurchaseEffect = null;
+                        }
+
+                        refreshShopUI();
+                    } else {
+                        showBrokeMessage();
+                    }
                 }
             }
             shopKeyStates[keyName] = !!keyDown;
         }
+    }
+
+    function refreshShopUI() {
+        const balanceEl = document.getElementById('shop-balance-amount');
+        if (balanceEl && glock) balanceEl.textContent = glock.money;
+
+        const container = document.getElementById('shop-items-container');
+        if (container) {
+            const items = LiquorStore.getMenuItems();
+            const itemDivs = container.querySelectorAll('.shop-item');
+            itemDivs.forEach((div, idx) => {
+                if (idx < items.length) {
+                    if (glock.money < items[idx].price) {
+                        div.classList.add('cant-afford');
+                    } else {
+                        div.classList.remove('cant-afford');
+                    }
+                }
+            });
+        }
+    }
+
+    function handleStripClubPurchase() {
+        if (!glock || !activeShopStore || !stripClubManager) return;
+
+        // Check money
+        if (glock.money < 1500) {
+            showBrokeMessage();
+            playBrokeSound();
+            return;
+        }
+
+        // Deduct money
+        glock.money -= 1500;
+
+        // Count collected/hired strippers to deposit
+        let stripperCount = 0;
+        if (stripperSpawner && stripperSpawner.strippers) {
+            for (let i = stripperSpawner.strippers.length - 1; i >= 0; i--) {
+                const s = stripperSpawner.strippers[i];
+                if (s.alive && (s.collected || s.hired) && !s.inCar) {
+                    stripperCount++;
+                    s.alive = false;
+                    if (s.mesh) scene.remove(s.mesh);
+                    stripperSpawner.strippers.splice(i, 1);
+                }
+            }
+        }
+
+        // Also count strippers in car
+        if (challenger && challenger.passengers) {
+            for (let i = challenger.passengers.length - 1; i >= 0; i--) {
+                const s = challenger.passengers[i];
+                stripperCount++;
+                s.alive = false;
+                s.inCar = false;
+                if (s.mesh) scene.remove(s.mesh);
+            }
+            challenger.passengers = [];
+        }
+
+        // Spawn the strip club building near the store
+        const club = stripClubManager.spawnClubNearStore(activeShopStore);
+
+        // Deposit strippers into the club
+        if (club && stripperCount > 0) {
+            club.depositStrippers(stripperCount);
+        }
+
+        // Play purchase sound
+        activeShopStore.playPurchaseSound();
+
+        // Money bill animation (reduced from 15 to 3 for performance)
+        if (glock.spawnDollarBill) {
+            for (let d = 0; d < 3; d++) {
+                setTimeout(() => glock.spawnDollarBill(), d * 100);
+            }
+        }
+
+        // Show big purchase message
+        const inviteMsg = document.getElementById('invite-message');
+        if (inviteMsg) {
+            const msgs = [
+                `🏪💃 STRIP CLUB OPENED! ${stripperCount} strippers deposited! 💸`,
+                `💃🔥 NEW STRIP CLUB! ${stripperCount} dancers inside! 🏪`,
+                `🏪💋 BUSINESS OWNER! ${stripperCount} strippers working! 💰`
+            ];
+            inviteMsg.textContent = msgs[Math.floor(Math.random() * msgs.length)];
+            inviteMsg.classList.remove('active');
+            inviteMsg.style.display = 'none';
+            void inviteMsg.offsetWidth;
+            inviteMsg.style.display = 'block';
+            inviteMsg.classList.add('active');
+            setTimeout(() => {
+                inviteMsg.classList.remove('active');
+                inviteMsg.style.display = 'none';
+            }, 4000);
+        }
+
+        // Refresh shop UI
+        refreshShopUI();
     }
 
     // === STEAL REMOTE PLAYER'S CAR ===

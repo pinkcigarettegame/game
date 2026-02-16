@@ -43,6 +43,50 @@ class Glock {
         this.money = 0;
         this.dollarBills = []; // floating dollar bill DOM elements
 
+        // === KILL STREAK SYSTEM ===
+        this.killStreak = 0;
+        this.killStreakTimer = 0;
+        this.killStreakTimeout = 4.5; // seconds between kills to maintain streak
+        this.killStreakNames = [
+            null,           // 0 kills
+            null,           // 1 kill (no announcement)
+            'Double Kill!',  // 2
+            'Triple Kill!',  // 3
+            'Killtacular!',  // 4
+            'Killtrocity!',  // 5
+            'Killamanjaro!', // 6
+            'Killtastrophe!',// 7
+            'Killpocalypse!',// 8
+            'Killionaire!',  // 9
+            'KILLGASM!'      // 10+
+        ];
+        this.killStreakEmojis = [
+            '',          // 0
+            '',          // 1
+            '🔥',       // 2
+            '🔥🔥',     // 3
+            '💀🔥',     // 4
+            '💀💀',     // 5
+            '🏔️💀',    // 6
+            '☠️🔥',     // 7
+            '☠️☠️',     // 8
+            '💰☠️',     // 9
+            '🌈💀🔥'    // 10+
+        ];
+        this.killStreakColors = [
+            '',          // 0
+            '',          // 1
+            '#ffaa00',   // 2 - orange
+            '#ff6600',   // 3 - deep orange
+            '#ff0066',   // 4 - hot pink
+            '#ff0000',   // 5 - red
+            '#cc00ff',   // 6 - purple
+            '#8800ff',   // 7 - deep purple
+            '#ff0000',   // 8 - red
+            '#ffdd00',   // 9 - gold
+            '#ff00ff'    // 10+ - magenta
+        ];
+
         // Combat coordination - armed strippers react to what player shoots
         this.lastTargetType = null; // 'crackhead', 'cop', or null
         this.lastTargetTime = 0; // timestamp of last hostile shot
@@ -53,6 +97,39 @@ class Glock {
         this.bongManSpawner = null;
         this.stripperSpawner = null;
         this.copSpawner = null;
+
+        // Pre-load speech synthesis voices
+        this.cachedVoices = [];
+        this.voicesLoaded = false;
+        this._loadVoices();
+    }
+
+    _loadVoices() {
+        try {
+            if (!window.speechSynthesis) return;
+            
+            const loadVoiceList = () => {
+                this.cachedVoices = window.speechSynthesis.getVoices();
+                if (this.cachedVoices.length > 0) {
+                    this.voicesLoaded = true;
+                }
+            };
+            
+            // Try immediately
+            loadVoiceList();
+            
+            // Also listen for async load
+            if (window.speechSynthesis.onvoiceschanged !== undefined) {
+                window.speechSynthesis.onvoiceschanged = loadVoiceList;
+            }
+            
+            // Fallback: retry after delays
+            if (!this.voicesLoaded) {
+                setTimeout(loadVoiceList, 100);
+                setTimeout(loadVoiceList, 500);
+                setTimeout(loadVoiceList, 1000);
+            }
+        } catch(e) {}
     }
 
     setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner) {
@@ -295,6 +372,7 @@ class Glock {
                     // Cat dies immediately - call explode directly
                     this.createHitEffect(hit);
                     cat.explode();
+                    this.registerKill();
                     hitSomething = true;
                     break;
                 }
@@ -319,6 +397,7 @@ class Glock {
                         bm.alive = false;
                         bm.dispose();
                         this.bongManSpawner.bongMen.splice(i, 1);
+                        this.registerKill();
                     } else {
                         // Flee when shot!
                         bm.fleeing = true;
@@ -361,6 +440,7 @@ class Glock {
                         this.money += 5;
                         s.dispose();
                         this.stripperSpawner.strippers.splice(i, 1);
+                        this.registerKill();
                     } else {
                         // Squeal and run away when shot
                         s.playSqueal();
@@ -397,6 +477,7 @@ class Glock {
                         this.money += 3;
                         ch.dispose();
                         this.crackheadSpawner.crackheads.splice(i, 1);
+                        this.registerKill();
                     } else {
                         // Flee when shot!
                         ch.fleeing = true;
@@ -437,9 +518,41 @@ class Glock {
                         cop.dispose();
                         this.copSpawner.cops.splice(i, 1);
                         this.copSpawner.addWanted(1);
+                        this.registerKill();
                     } else {
                         // Cop shouts when hit
                         cop.playShout();
+                    }
+                    hitSomething = true;
+                    break;
+                }
+            }
+        }
+
+        // Check police motorcycles - bigger hitbox (bike + rider), drop good money
+        if (!hitSomething && this.copSpawner && this.copSpawner.motorcycles) {
+            for (let i = this.copSpawner.motorcycles.length - 1; i >= 0; i--) {
+                const moto = this.copSpawner.motorcycles[i];
+                if (!moto.alive) continue;
+                const hit = this.checkRayHit(origin, direction, moto.position, 0.6, 1.6);
+                if (hit) {
+                    this.lastTargetType = 'cop';
+                    this.lastTargetTime = Date.now() / 1000;
+                    moto.health -= this.damage;
+                    this.createHitEffect(hit);
+                    this.createBloodEffect(hit);
+                    if (moto.health <= 0) {
+                        moto.alive = false;
+                        // Motorcycle cops drop $25-40
+                        const motoMoney = 25 + Math.floor(Math.random() * 16);
+                        for (let d = 0; d < 8; d++) {
+                            setTimeout(() => this.spawnDollarBill(), d * 70);
+                        }
+                        this.money += motoMoney;
+                        moto.dispose();
+                        this.copSpawner.motorcycles.splice(i, 1);
+                        this.copSpawner.addWanted(2);
+                        this.registerKill();
                     }
                     hitSomething = true;
                     break;
@@ -592,39 +705,163 @@ class Glock {
     }
 
     createBloodEffect(hitPos) {
-        // Red blood particles
-        for (let i = 0; i < 12; i++) {
-            const size = 0.04 + Math.random() * 0.08;
-            const geo = new THREE.BoxGeometry(size, size, size);
-            const shade = 0.5 + Math.random() * 0.5;
+        const scene = this.scene;
+        
+        // === 1. BLOOD SPRAY PARTICLES (more, varied sizes) ===
+        const particleCount = 25 + Math.floor(Math.random() * 10);
+        for (let i = 0; i < particleCount; i++) {
+            const size = 0.03 + Math.random() * 0.12;
+            const geo = new THREE.BoxGeometry(size, size * (0.5 + Math.random()), size);
+            const shade = 0.3 + Math.random() * 0.7;
             const mat = new THREE.MeshBasicMaterial({ 
-                color: new THREE.Color(shade, 0, 0), 
-                transparent: true, opacity: 0.9 
+                color: new THREE.Color(shade, Math.random() * 0.04, Math.random() * 0.02), 
+                transparent: true, opacity: 0.95 
             });
             const blood = new THREE.Mesh(geo, mat);
             blood.position.copy(hitPos);
-            const vx = (Math.random() - 0.5) * 4;
-            const vy = Math.random() * 3 - 0.5;
-            const vz = (Math.random() - 0.5) * 4;
-            this.scene.add(blood);
+            blood.position.x += (Math.random() - 0.5) * 0.3;
+            blood.position.y += (Math.random() - 0.5) * 0.3;
+            blood.position.z += (Math.random() - 0.5) * 0.3;
+            
+            // Get shot direction for directional spray
+            const dir = new THREE.Vector3(0, 0, -1);
+            dir.applyQuaternion(this.camera.getWorldQuaternion(new THREE.Quaternion()));
+            
+            const vx = dir.x * (3 + Math.random() * 6) + (Math.random() - 0.5) * 5;
+            const vy = (Math.random() - 0.3) * 5 + 1;
+            const vz = dir.z * (3 + Math.random() * 6) + (Math.random() - 0.5) * 5;
+            const spinX = (Math.random() - 0.5) * 12;
+            const spinZ = (Math.random() - 0.5) * 12;
+            const gravity = -10 - Math.random() * 5;
+            
+            scene.add(blood);
 
             let frame = 0;
+            let velY = vy;
+            const maxFrames = 30 + Math.floor(Math.random() * 15);
             const animate = () => {
                 frame++;
+                velY += gravity * 0.016;
                 blood.position.x += vx * 0.016;
-                blood.position.y += (vy - frame * 0.2) * 0.016;
+                blood.position.y += velY * 0.016;
                 blood.position.z += vz * 0.016;
-                mat.opacity = Math.max(0, 0.9 - frame / 25);
-                if (frame < 25) {
+                blood.rotation.x += spinX * 0.016;
+                blood.rotation.z += spinZ * 0.016;
+                mat.opacity = Math.max(0, 0.95 - frame / maxFrames);
+                const s = Math.max(0.3, 1 - frame / maxFrames * 0.4);
+                blood.scale.set(s, s, s);
+                if (frame < maxFrames && mat.opacity > 0) {
                     requestAnimationFrame(animate);
                 } else {
-                    this.scene.remove(blood);
+                    scene.remove(blood);
                     geo.dispose();
                     mat.dispose();
                 }
             };
             requestAnimationFrame(animate);
         }
+        
+        // === 2. MEATY GIBS (small chunks) ===
+        const gibCount = 3 + Math.floor(Math.random() * 3);
+        const gibColors = [0x882222, 0xaa3333, 0x661111, 0xcc8866, 0x993322];
+        for (let i = 0; i < gibCount; i++) {
+            const gw = 0.06 + Math.random() * 0.12;
+            const gh = 0.05 + Math.random() * 0.1;
+            const gd = 0.06 + Math.random() * 0.1;
+            const gGeo = new THREE.BoxGeometry(gw, gh, gd);
+            const gMat = new THREE.MeshLambertMaterial({
+                color: gibColors[Math.floor(Math.random() * gibColors.length)],
+                transparent: true, opacity: 1.0
+            });
+            const gib = new THREE.Mesh(gGeo, gMat);
+            gib.position.copy(hitPos);
+            
+            const dir = new THREE.Vector3(0, 0, -1);
+            dir.applyQuaternion(this.camera.getWorldQuaternion(new THREE.Quaternion()));
+            
+            const gvx = dir.x * (2 + Math.random() * 5) + (Math.random() - 0.5) * 4;
+            let gvy = 2 + Math.random() * 5;
+            const gvz = dir.z * (2 + Math.random() * 5) + (Math.random() - 0.5) * 4;
+            const gSpinX = (Math.random() - 0.5) * 18;
+            const gSpinY = (Math.random() - 0.5) * 18;
+            const gSpinZ = (Math.random() - 0.5) * 18;
+            
+            scene.add(gib);
+            
+            let gFrame = 0;
+            const animateGib = () => {
+                gFrame++;
+                gvy -= 15 * 0.016;
+                gib.position.x += gvx * 0.016;
+                gib.position.y += gvy * 0.016;
+                gib.position.z += gvz * 0.016;
+                gib.rotation.x += gSpinX * 0.016;
+                gib.rotation.y += gSpinY * 0.016;
+                gib.rotation.z += gSpinZ * 0.016;
+                gMat.opacity = Math.max(0, 1.0 - gFrame / 60);
+                if (gFrame < 60 && gMat.opacity > 0) {
+                    requestAnimationFrame(animateGib);
+                } else {
+                    scene.remove(gib);
+                    gGeo.dispose();
+                    gMat.dispose();
+                }
+            };
+            requestAnimationFrame(animateGib);
+        }
+        
+        // === 3. BLOOD SPLAT ON NEARBY SURFACE ===
+        const splatGeo = new THREE.BoxGeometry(0.4 + Math.random() * 0.5, 0.01, 0.4 + Math.random() * 0.5);
+        const splatMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0.4 + Math.random() * 0.3, 0, 0),
+            transparent: true, opacity: 0.65, side: THREE.DoubleSide
+        });
+        const splat = new THREE.Mesh(splatGeo, splatMat);
+        splat.position.copy(hitPos);
+        splat.position.y -= 0.1;
+        splat.rotation.y = Math.random() * Math.PI * 2;
+        scene.add(splat);
+        
+        let splatFrame = 0;
+        const animateSplat = () => {
+            splatFrame++;
+            splatMat.opacity = Math.max(0, 0.65 - splatFrame / 180);
+            const sc = 1 + splatFrame * 0.01;
+            splat.scale.set(sc, 1, sc);
+            if (splatFrame < 180) {
+                requestAnimationFrame(animateSplat);
+            } else {
+                scene.remove(splat);
+                splatGeo.dispose();
+                splatMat.dispose();
+            }
+        };
+        requestAnimationFrame(animateSplat);
+        
+        // === 4. BLOOD MIST (brief red cloud) ===
+        const mistGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const mistMat = new THREE.MeshBasicMaterial({
+            color: 0xaa0000, transparent: true, opacity: 0.35
+        });
+        const mist = new THREE.Mesh(mistGeo, mistMat);
+        mist.position.copy(hitPos);
+        scene.add(mist);
+        
+        let mistFrame = 0;
+        const animateMist = () => {
+            mistFrame++;
+            const ms = 1 + mistFrame * 0.15;
+            mist.scale.set(ms, ms, ms);
+            mistMat.opacity = Math.max(0, 0.35 - mistFrame / 15);
+            if (mistFrame < 15) {
+                requestAnimationFrame(animateMist);
+            } else {
+                scene.remove(mist);
+                mistGeo.dispose();
+                mistMat.dispose();
+            }
+        };
+        requestAnimationFrame(animateMist);
     }
 
     createBulletHole(blockHit) {
@@ -1247,6 +1484,15 @@ class Glock {
             this.slideBackTimer -= dt;
         }
 
+        // Kill streak timer decay
+        if (this.killStreakTimer > 0) {
+            this.killStreakTimer -= dt;
+            if (this.killStreakTimer <= 0) {
+                this.killStreak = 0;
+                this.killStreakTimer = 0;
+            }
+        }
+
         // Update wanted stars display
         this.updateWantedDisplay();
 
@@ -1303,6 +1549,353 @@ class Glock {
             );
             this.gunGroup.rotation.x = 0;
         }
+    }
+
+    // === KILL STREAK SYSTEM ===
+    registerKill() {
+        this.killStreak++;
+        this.killStreakTimer = this.killStreakTimeout;
+
+        if (this.killStreak >= 2) {
+            const index = Math.min(this.killStreak, this.killStreakNames.length - 1);
+            const name = this.killStreakNames[index];
+            const emoji = this.killStreakEmojis[index];
+            const color = this.killStreakColors[index];
+            
+            this.showKillStreakBanner(name, emoji, color, this.killStreak);
+            this.playKillStreakSound(this.killStreak);
+            this.announceKillStreak(name, this.killStreak);
+        }
+    }
+
+    announceKillStreak(name, streak) {
+        try {
+            if (!window.speechSynthesis) return;
+            
+            // Cancel any current announcement
+            window.speechSynthesis.cancel();
+            
+            // Clean the name for speech (remove ! and extra punctuation)
+            const speakText = name.replace(/!/g, '');
+            
+            const doSpeak = () => {
+                const utterance = new SpeechSynthesisUtterance(speakText);
+                
+                // Deep, dramatic announcer voice settings
+                utterance.rate = 0.8 - Math.min(streak, 10) * 0.02; // Slower for higher streaks
+                utterance.pitch = 0.3 + Math.min(streak, 10) * 0.06; // Low pitch, rising slightly
+                utterance.volume = 1.0; // Max volume so it's heard over sound effects
+                
+                // Use pre-cached voices (loaded asynchronously at startup)
+                const voices = this.cachedVoices.length > 0 ? this.cachedVoices : window.speechSynthesis.getVoices();
+                if (voices.length > 0) {
+                    // Prefer deep/male English voices
+                    const preferred = voices.find(v => 
+                        v.lang.startsWith('en') && (
+                            v.name.toLowerCase().includes('male') || 
+                            v.name.toLowerCase().includes('david') || 
+                            v.name.toLowerCase().includes('james') ||
+                            v.name.toLowerCase().includes('daniel') ||
+                            v.name.toLowerCase().includes('mark') ||
+                            v.name.toLowerCase().includes('zira') ||
+                            v.name.toLowerCase().includes('google us english')
+                        )
+                    );
+                    if (preferred) {
+                        utterance.voice = preferred;
+                    } else {
+                        // Fall back to any English voice
+                        const english = voices.find(v => v.lang.startsWith('en'));
+                        if (english) utterance.voice = english;
+                    }
+                }
+                
+                window.speechSynthesis.speak(utterance);
+            };
+            
+            // Delay so the musical stinger plays first, then the voice announces
+            setTimeout(doSpeak, 600);
+        } catch(e) {}
+    }
+
+    showKillStreakBanner(name, emoji, color, streak) {
+        // Remove any existing banner
+        const existing = document.getElementById('kill-streak-banner');
+        if (existing) existing.remove();
+
+        const banner = document.createElement('div');
+        banner.id = 'kill-streak-banner';
+        
+        // Scale up drama for higher streaks
+        const baseFontSize = 36 + Math.min(streak, 10) * 4;
+        const glowIntensity = Math.min(streak * 3, 30);
+        const shakeIntensity = streak >= 6 ? 'shake-hard' : streak >= 4 ? 'shake-medium' : '';
+        
+        banner.innerHTML = `
+            <div class="kill-streak-emoji">${emoji}</div>
+            <div class="kill-streak-text" style="color: ${color}; font-size: ${baseFontSize}px; 
+                text-shadow: 0 0 ${glowIntensity}px ${color}, 0 0 ${glowIntensity * 2}px ${color}, 
+                0 0 ${glowIntensity * 3}px ${color}, 3px 3px 8px rgba(0,0,0,0.9);">
+                ${name}
+            </div>
+            <div class="kill-streak-count" style="color: ${color};">x${streak}</div>
+        `;
+        
+        banner.style.cssText = `
+            position: fixed;
+            top: 30%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.3);
+            z-index: 600;
+            pointer-events: none;
+            text-align: center;
+            opacity: 0;
+            transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.1s ease-out;
+            font-family: 'Impact', 'Arial Black', sans-serif;
+            letter-spacing: 3px;
+            user-select: none;
+        `;
+
+        // Style the sub-elements
+        const style = document.createElement('style');
+        style.id = 'kill-streak-style';
+        const existingStyle = document.getElementById('kill-streak-style');
+        if (!existingStyle) {
+            style.textContent = `
+                .kill-streak-emoji {
+                    font-size: 48px;
+                    margin-bottom: 4px;
+                    filter: drop-shadow(0 0 8px rgba(255,255,255,0.5));
+                    animation: streak-emoji-bounce 0.3s ease-out;
+                }
+                .kill-streak-text {
+                    font-weight: bold;
+                    text-transform: uppercase;
+                    white-space: nowrap;
+                }
+                .kill-streak-count {
+                    font-size: 22px;
+                    font-weight: bold;
+                    margin-top: 4px;
+                    opacity: 0.8;
+                    font-family: 'Courier New', monospace;
+                    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+                }
+                @keyframes streak-emoji-bounce {
+                    0% { transform: scale(0.5) rotate(-10deg); }
+                    50% { transform: scale(1.3) rotate(5deg); }
+                    100% { transform: scale(1) rotate(0deg); }
+                }
+                @keyframes streak-shake-medium {
+                    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+                    10% { transform: translate(calc(-50% + 3px), calc(-50% - 2px)) scale(1); }
+                    20% { transform: translate(calc(-50% - 3px), calc(-50% + 2px)) scale(1); }
+                    30% { transform: translate(calc(-50% + 2px), calc(-50% + 3px)) scale(1); }
+                    40% { transform: translate(calc(-50% - 2px), calc(-50% - 3px)) scale(1); }
+                    50% { transform: translate(calc(-50% + 3px), calc(-50% + 1px)) scale(1); }
+                }
+                @keyframes streak-shake-hard {
+                    0%, 100% { transform: translate(-50%, -50%) scale(1.05); }
+                    10% { transform: translate(calc(-50% + 6px), calc(-50% - 4px)) scale(1.05); }
+                    20% { transform: translate(calc(-50% - 5px), calc(-50% + 5px)) scale(1.05); }
+                    30% { transform: translate(calc(-50% + 4px), calc(-50% + 6px)) scale(1.05); }
+                    40% { transform: translate(calc(-50% - 6px), calc(-50% - 5px)) scale(1.05); }
+                    50% { transform: translate(calc(-50% + 5px), calc(-50% + 3px)) scale(1.05); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        document.body.appendChild(banner);
+
+        // Animate in
+        requestAnimationFrame(() => {
+            banner.style.opacity = '1';
+            banner.style.transform = 'translate(-50%, -50%) scale(1)';
+            
+            // Apply shake for high streaks
+            if (shakeIntensity) {
+                setTimeout(() => {
+                    banner.style.transition = 'none';
+                    banner.style.animation = shakeIntensity === 'shake-hard' 
+                        ? 'streak-shake-hard 0.4s ease-in-out' 
+                        : 'streak-shake-medium 0.3s ease-in-out';
+                }, 150);
+            }
+        });
+
+        // Screen flash for high streaks
+        if (streak >= 5) {
+            const flash = document.createElement('div');
+            flash.style.cssText = `
+                position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                background: ${color}; opacity: 0.15; z-index: 550;
+                pointer-events: none; transition: opacity 0.4s ease-out;
+            `;
+            document.body.appendChild(flash);
+            requestAnimationFrame(() => {
+                flash.style.opacity = '0';
+                setTimeout(() => flash.remove(), 400);
+            });
+        }
+
+        // Fade out after delay (longer for higher streaks)
+        const displayTime = 1200 + Math.min(streak, 10) * 150;
+        setTimeout(() => {
+            banner.style.transition = 'transform 0.4s ease-in, opacity 0.4s ease-in';
+            banner.style.opacity = '0';
+            banner.style.transform = 'translate(-50%, -60%) scale(1.2)';
+            setTimeout(() => banner.remove(), 500);
+        }, displayTime);
+    }
+
+    playKillStreakSound(streak) {
+        try {
+            if (!this.audioCtx) {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const ctx = this.audioCtx;
+            const t = ctx.currentTime;
+
+            // Base intensity scales with streak
+            const intensity = Math.min(streak / 10, 1.0);
+
+            // === LAYER 1: Deep impact boom (gets deeper with higher streaks) ===
+            const boom = ctx.createOscillator();
+            boom.type = 'sine';
+            boom.frequency.setValueAtTime(120 - streak * 5, t);
+            boom.frequency.exponentialRampToValueAtTime(30, t + 0.2 + intensity * 0.2);
+            const boomGain = ctx.createGain();
+            boomGain.gain.setValueAtTime(0.3 + intensity * 0.3, t);
+            boomGain.gain.exponentialRampToValueAtTime(0.01, t + 0.3 + intensity * 0.3);
+            boom.connect(boomGain);
+            boomGain.connect(ctx.destination);
+            boom.start(t);
+            boom.stop(t + 0.5 + intensity * 0.3);
+
+            // === LAYER 2: Rising announcement tone (like Halo announcer stinger) ===
+            const noteBase = 400 + streak * 50;
+            const rise = ctx.createOscillator();
+            rise.type = 'sawtooth';
+            rise.frequency.setValueAtTime(noteBase * 0.5, t + 0.05);
+            rise.frequency.exponentialRampToValueAtTime(noteBase, t + 0.15);
+            rise.frequency.setValueAtTime(noteBase, t + 0.15);
+            rise.frequency.exponentialRampToValueAtTime(noteBase * 1.5, t + 0.25);
+            const riseGain = ctx.createGain();
+            riseGain.gain.setValueAtTime(0.15 + intensity * 0.1, t + 0.05);
+            riseGain.gain.setValueAtTime(0.2 + intensity * 0.15, t + 0.15);
+            riseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+            // Add distortion for higher streaks
+            const riseFilter = ctx.createBiquadFilter();
+            riseFilter.type = 'lowpass';
+            riseFilter.frequency.setValueAtTime(2000 + streak * 300, t);
+            rise.connect(riseFilter);
+            riseFilter.connect(riseGain);
+            riseGain.connect(ctx.destination);
+            rise.start(t + 0.05);
+            rise.stop(t + 0.6);
+
+            // === LAYER 3: Harmonic chord (power chord feel) ===
+            const chordNotes = [noteBase, noteBase * 1.25, noteBase * 1.5];
+            if (streak >= 6) chordNotes.push(noteBase * 2); // octave for high streaks
+            chordNotes.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                osc.type = streak >= 8 ? 'sawtooth' : 'triangle';
+                osc.frequency.setValueAtTime(freq, t + 0.1);
+                const oscGain = ctx.createGain();
+                const vol = (0.08 + intensity * 0.06) / chordNotes.length;
+                oscGain.gain.setValueAtTime(vol, t + 0.1);
+                oscGain.gain.setValueAtTime(vol * 1.2, t + 0.2);
+                oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.6 + intensity * 0.4);
+                osc.connect(oscGain);
+                oscGain.connect(ctx.destination);
+                osc.start(t + 0.1);
+                osc.stop(t + 0.8 + intensity * 0.4);
+            });
+
+            // === LAYER 4: Metallic crash/cymbal (noise burst) ===
+            const crashLen = ctx.sampleRate * (0.3 + intensity * 0.3);
+            const crashBuf = ctx.createBuffer(1, crashLen, ctx.sampleRate);
+            const crashData = crashBuf.getChannelData(0);
+            for (let i = 0; i < crashLen; i++) {
+                crashData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * (0.08 + intensity * 0.1)));
+            }
+            const crashSrc = ctx.createBufferSource();
+            crashSrc.buffer = crashBuf;
+            const crashGain = ctx.createGain();
+            crashGain.gain.setValueAtTime(0.12 + intensity * 0.1, t + 0.08);
+            crashGain.gain.exponentialRampToValueAtTime(0.01, t + 0.4 + intensity * 0.3);
+            const crashHP = ctx.createBiquadFilter();
+            crashHP.type = 'highpass';
+            crashHP.frequency.setValueAtTime(3000 + streak * 200, t);
+            crashSrc.connect(crashHP);
+            crashHP.connect(crashGain);
+            crashGain.connect(ctx.destination);
+            crashSrc.start(t + 0.08);
+
+            // === LAYER 5: Victory bell/chime (higher streaks get more chimes) ===
+            const chimeCount = Math.min(streak, 5);
+            for (let i = 0; i < chimeCount; i++) {
+                const chime = ctx.createOscillator();
+                chime.type = 'sine';
+                const chimeFreq = 1200 + i * 400 + streak * 100;
+                const chimeDelay = 0.15 + i * 0.08;
+                chime.frequency.setValueAtTime(chimeFreq, t + chimeDelay);
+                chime.frequency.exponentialRampToValueAtTime(chimeFreq * 0.8, t + chimeDelay + 0.3);
+                const chimeGain = ctx.createGain();
+                chimeGain.gain.setValueAtTime(0.1, t + chimeDelay);
+                chimeGain.gain.exponentialRampToValueAtTime(0.001, t + chimeDelay + 0.4);
+                chime.connect(chimeGain);
+                chimeGain.connect(ctx.destination);
+                chime.start(t + chimeDelay);
+                chime.stop(t + chimeDelay + 0.5);
+            }
+
+            // === LAYER 6: Sub-bass rumble for 7+ streaks ===
+            if (streak >= 7) {
+                const rumbleLen = ctx.sampleRate * 0.5;
+                const rumbleBuf = ctx.createBuffer(1, rumbleLen, ctx.sampleRate);
+                const rumbleData = rumbleBuf.getChannelData(0);
+                for (let i = 0; i < rumbleLen; i++) {
+                    rumbleData[i] = Math.sin(i / ctx.sampleRate * Math.PI * 2 * 25) * 
+                                    Math.exp(-i / (ctx.sampleRate * 0.2)) * 0.5 +
+                                    (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.1)) * 0.3;
+                }
+                const rumbleSrc = ctx.createBufferSource();
+                rumbleSrc.buffer = rumbleBuf;
+                const rumbleGain = ctx.createGain();
+                rumbleGain.gain.setValueAtTime(0.35, t);
+                rumbleGain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+                const rumbleLP = ctx.createBiquadFilter();
+                rumbleLP.type = 'lowpass';
+                rumbleLP.frequency.setValueAtTime(100, t);
+                rumbleSrc.connect(rumbleLP);
+                rumbleLP.connect(rumbleGain);
+                rumbleGain.connect(ctx.destination);
+                rumbleSrc.start(t);
+            }
+
+            // === LAYER 7: Descending power slide for 9+ (KILLIONAIRE/KILLGASM) ===
+            if (streak >= 9) {
+                const slide = ctx.createOscillator();
+                slide.type = 'sawtooth';
+                slide.frequency.setValueAtTime(2000, t + 0.3);
+                slide.frequency.exponentialRampToValueAtTime(100, t + 0.8);
+                const slideGain = ctx.createGain();
+                slideGain.gain.setValueAtTime(0.15, t + 0.3);
+                slideGain.gain.exponentialRampToValueAtTime(0.01, t + 0.8);
+                const slideFilter = ctx.createBiquadFilter();
+                slideFilter.type = 'lowpass';
+                slideFilter.frequency.setValueAtTime(4000, t + 0.3);
+                slideFilter.frequency.exponentialRampToValueAtTime(200, t + 0.8);
+                slide.connect(slideFilter);
+                slideFilter.connect(slideGain);
+                slideGain.connect(ctx.destination);
+                slide.start(t + 0.3);
+                slide.stop(t + 0.9);
+            }
+
+        } catch(e) {}
     }
 
     dispose() {

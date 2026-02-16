@@ -115,20 +115,65 @@ class DodgeChallenger {
         this.passengers.push(stripper);
     }
 
-    // Release all passengers when exiting - they become part of the player's collection
-    // Strippers stay hidden (collected) and only appear during money spread
+    // Release all passengers when exiting
+    // Armed strippers split: up to 2 follow the player, rest guard the car with suppressing fire
+    // Unarmed strippers become collected (hidden)
     releasePassengers(exitPos) {
+        const maxEscorts = 2; // Max armed strippers that follow the player
+        let escortCount = 0;
+        let guardIndex = 0;
+
         for (let i = 0; i < this.passengers.length; i++) {
             const s = this.passengers[i];
             if (!s.alive) continue;
             s.inCar = false;
             s.carRef = null;
-            s.collected = true; // Mark as collected - part of the pimp's stable
-            s.mesh.visible = false; // Stay hidden until money spread
             s.velocity.set(0, 0, 0);
-            // Position near player but hidden
-            if (exitPos) {
-                s.position.copy(exitPos);
+
+            if (s.armed && escortCount < maxEscorts) {
+                // Armed escort - follows the player on foot as bodyguard
+                s.collected = false;
+                s.guardingCar = false;
+                s.guardPosition = null;
+                s.guardCarRef = null;
+                s.mesh.visible = true;
+                s.hired = true;
+                // Position near the player exit point, spread out slightly
+                if (exitPos) {
+                    const spreadAngle = (escortCount - 0.5) * 1.5; // Spread left/right
+                    s.position.set(
+                        exitPos.x + Math.cos(this.rotation + spreadAngle) * 2,
+                        exitPos.y,
+                        exitPos.z - Math.sin(this.rotation + spreadAngle) * 2
+                    );
+                }
+                escortCount++;
+            } else if (s.armed) {
+                // Armed car guard - stays near the car providing suppressing fire
+                s.collected = false;
+                s.guardingCar = true;
+                s.guardCarRef = this;
+                s.hired = true;
+                s.mesh.visible = true;
+                // Position around the car in a defensive spread
+                const guardAngle = (guardIndex / Math.max(1, this.passengers.length - maxEscorts)) * Math.PI * 2;
+                const guardDist = 3.0; // Distance from car center
+                const guardX = this.position.x + Math.cos(guardAngle) * guardDist;
+                const guardZ = this.position.z + Math.sin(guardAngle) * guardDist;
+                const guardY = this.world.getSpawnHeight(guardX, guardZ) + 0.5;
+                s.position.set(guardX, guardY, guardZ);
+                s.guardPosition = new THREE.Vector3(guardX, guardY, guardZ);
+                guardIndex++;
+            } else {
+                // Unarmed - collected and hidden as before
+                s.collected = true;
+                s.guardingCar = false;
+                s.guardPosition = null;
+                s.guardCarRef = null;
+                s.mesh.visible = false;
+                if (exitPos) {
+                    s.position.copy(exitPos);
+                }
             }
         }
         this.passengers = [];

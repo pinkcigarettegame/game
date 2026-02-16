@@ -511,8 +511,11 @@ class CopSpawner {
         this.scene = scene;
         this.player = player;
         this.cops = [];
+        this.motorcycles = []; // Police motorcycles at 3+ stars
         this.spawnCooldown = 0;
         this.spawnInterval = 8; // Slower spawning
+        this.motorcycleSpawnCooldown = 0;
+        this.motorcycleSpawnInterval = 6; // Fast motorcycle spawning for pursuit
         this.wantedLevel = 0; // 0-5 stars
         this.wantedDecayTimer = 0;
         this.wantedDecayInterval = 12; // seconds to lose 1 star
@@ -534,6 +537,15 @@ class CopSpawner {
         return 5; // 5 stars = 5 cops max
     }
 
+    getMaxMotorcycles() {
+        // Police motorcycles at 2+ stars
+        if (this.wantedLevel < 2) return 0;
+        if (this.wantedLevel === 2) return 1;
+        if (this.wantedLevel === 3) return 2;
+        if (this.wantedLevel === 4) return 3;
+        return 4; // 5 stars = 4 motorcycles max
+    }
+
     update(dt, playerPos) {
         // Decay wanted level over time
         if (this.wantedLevel > 0) {
@@ -551,6 +563,15 @@ class CopSpawner {
         if (this.spawnCooldown <= 0 && this.cops.length < maxCops && this.wantedLevel > 0) {
             this.trySpawn(playerPos);
             this.spawnCooldown = Math.max(5, this.spawnInterval - this.wantedLevel * 0.5);
+        }
+
+        // Spawn police motorcycles at 3+ stars
+        this.motorcycleSpawnCooldown -= dt;
+        const maxMotorcycles = this.getMaxMotorcycles();
+
+        if (this.motorcycleSpawnCooldown <= 0 && this.motorcycles.length < maxMotorcycles && this.wantedLevel >= 2) {
+            this.trySpawnMotorcycle(playerPos);
+            this.motorcycleSpawnCooldown = Math.max(4, this.motorcycleSpawnInterval - (this.wantedLevel - 2) * 1.0);
         }
 
         // Update all cops
@@ -572,12 +593,40 @@ class CopSpawner {
             }
         }
 
+        // Update all police motorcycles
+        for (let i = this.motorcycles.length - 1; i >= 0; i--) {
+            const moto = this.motorcycles[i];
+            moto.update(dt, playerPos, this.wantedLevel);
+
+            if (!moto.alive) {
+                moto.dispose();
+                this.motorcycles.splice(i, 1);
+                continue;
+            }
+
+            // Despawn if too far and not chasing
+            if (!moto.chasing && moto.position.distanceTo(playerPos) > 160) {
+                moto.dispose();
+                this.motorcycles.splice(i, 1);
+            }
+        }
+
         // If wanted level drops to 0, despawn all cops gradually
         if (this.wantedLevel <= 0) {
             for (let i = this.cops.length - 1; i >= 0; i--) {
                 if (this.cops[i].position.distanceTo(playerPos) > 30) {
                     this.cops[i].dispose();
                     this.cops.splice(i, 1);
+                }
+            }
+        }
+
+        // If wanted level drops below 2, despawn motorcycles gradually
+        if (this.wantedLevel < 2) {
+            for (let i = this.motorcycles.length - 1; i >= 0; i--) {
+                if (this.motorcycles[i].position.distanceTo(playerPos) > 40) {
+                    this.motorcycles[i].dispose();
+                    this.motorcycles.splice(i, 1);
                 }
             }
         }
@@ -599,8 +648,33 @@ class CopSpawner {
         this.cops.push(cop);
     }
 
+    trySpawnMotorcycle(playerPos) {
+        // Spawn motorcycle cops from further away (they're fast, so they close distance quickly)
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 30 + Math.random() * 20;
+        const sx = playerPos.x + Math.cos(angle) * dist;
+        const sz = playerPos.z + Math.sin(angle) * dist;
+        const sy = this.world.getSpawnHeight(sx, sz);
+
+        if (sy <= WATER_LEVEL + 1) return;
+        const groundBlock = this.world.getBlock(Math.floor(sx), sy - 1, Math.floor(sz));
+        if (groundBlock === BlockType.AIR || groundBlock === BlockType.WATER) return;
+
+        const moto = new PoliceMotorcycle(this.world, this.scene, sx, sy, sz, this.player);
+        // Point motorcycle toward the player initially
+        const toPlayer = new THREE.Vector3().subVectors(playerPos, moto.position);
+        toPlayer.y = 0;
+        moto.rotation = Math.atan2(toPlayer.x, toPlayer.z);
+        moto.speed = 12; // Start fast - already in pursuit!
+        this.motorcycles.push(moto);
+    }
+
     getCount() {
         return this.cops.length;
+    }
+
+    getMotorcycleCount() {
+        return this.motorcycles.length;
     }
 
     getWantedLevel() {
