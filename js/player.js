@@ -478,6 +478,9 @@ class Player {
     die() {
         this.dead = true;
         this.health = 0;
+
+        // Reset missions on death
+        if (window.missionSystem) window.missionSystem.reset();
         // Show death screen
         const deathScreen = document.getElementById('death-screen');
         if (deathScreen) deathScreen.style.display = 'flex';

@@ -573,6 +573,37 @@ class Glock {
             }
         }
 
+        // Check police helicopter - large hitbox (it's a helicopter!), big money reward
+        if (!hitSomething && this.copSpawner && this.copSpawner.helicopter) {
+            const heli = this.copSpawner.helicopter;
+            if (heli.alive) {
+                const hit = this.checkRayHit(origin, direction, heli.position, 2.0, 2.5);
+                if (hit) {
+                    this.lastTargetType = 'cop';
+                    this.lastTargetTime = Date.now() / 1000;
+                    heli.health -= this.damage;
+                    this.createHitEffect(hit);
+                    // Sparks instead of blood for helicopter
+                    this.createHitEffect(hit);
+                    if (heli.health <= 0) {
+                        heli.alive = false;
+                        // Helicopter drops BIG money $50-100
+                        const heliMoney = 50 + Math.floor(Math.random() * 51);
+                        for (let d = 0; d < 15; d++) {
+                            setTimeout(() => this.spawnDollarBill(), d * 50);
+                        }
+                        this.money += heliMoney;
+                        if (window.missionSystem) { window.missionSystem.onMoneyEarned(heliMoney); }
+                        heli.dispose();
+                        this.copSpawner.helicopter = null;
+                        this.copSpawner.addWanted(2);
+                        this.registerKill();
+                    }
+                    hitSomething = true;
+                }
+            }
+        }
+
         // If nothing hit, check for block hit (bullet hole effect)
         if (!hitSomething) {
             const blockHit = this.player.world.raycast(origin, direction, this.range);

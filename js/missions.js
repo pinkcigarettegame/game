@@ -791,6 +791,28 @@ class MissionSystem {
         } catch(e) {}
     }
 
+    reset() {
+        // Reset all progress on death
+        this.currentMissionIndex = 0;
+        this.allComplete = false;
+        for (const key in this.progress) {
+            this.progress[key] = 0;
+        }
+
+        // Clear saved progress
+        try {
+            localStorage.removeItem('pinkCigMissions');
+        } catch(e) {}
+
+        // Update UI to show first mission again
+        this.updateTrackerUI();
+
+        // Show the first mission banner after a short delay
+        setTimeout(() => {
+            this.showNewMissionBanner(this.getCurrentMission());
+        }, 1500);
+    }
+
     loadProgress() {
         try {
             const saved = localStorage.getItem('pinkCigMissions');

@@ -1755,6 +1755,45 @@
             }
         }
 
+        // --- Check Police Helicopter (if flying low enough) ---
+        if (copSpawner && copSpawner.helicopter) {
+            const heli = copSpawner.helicopter;
+            if (heli.alive) {
+                // Check if helicopter is low enough to be hit by car (within ~8 blocks above ground)
+                const heliHeightAboveCar = heli.position.y - challenger.position.y;
+                if (heliHeightAboveCar < 8 && heliHeightAboveCar > -2) {
+                    const dx = heli.position.x - challenger.position.x;
+                    const dz = heli.position.z - challenger.position.z;
+                    const horizDist = Math.sqrt(dx * dx + dz * dz);
+                    if (horizDist < 4) { // Helicopter is wide
+                        if (carSpeed >= MIN_KILL_SPEED) {
+                            heli.health -= Math.ceil(carSpeed * 5);
+                            spawnCarBloodEffect(heli.position);
+                            hitSomething = true;
+                            hitCount++;
+                            if (heli.health <= 0) {
+                                heli.alive = false;
+                                // Helicopter drops BIG money $50-100
+                                const heliMoney = 50 + Math.floor(Math.random() * 51);
+                                if (glock) {
+                                    glock.money += heliMoney;
+                                    for (let d = 0; d < 10; d++) {
+                                        setTimeout(() => glock.spawnDollarBill(), d * 60);
+                                    }
+                                    if (missionSystem) missionSystem.onMoneyEarned(heliMoney);
+                                }
+                                heli.dispose();
+                                copSpawner.helicopter = null;
+                                copSpawner.addWanted(2);
+                            } else {
+                                copSpawner.addWanted(1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Apply effects if we hit something
         if (hitSomething) {
             playCarImpactSound(hitCount);
