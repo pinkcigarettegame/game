@@ -41,7 +41,7 @@
         const el = document.getElementById('visitor-counter');
         if (!el) return;
 
-        const label = isGlobal ? 'historic players' : 'visits tracked';
+        const label = isGlobal ? 'historic players' : 'visits';
         el.innerHTML = `👥 <span style="color:#ffcc00; font-weight:bold;">${count.toLocaleString()}</span> ${label}`;
         
         // Add a subtle glow animation
