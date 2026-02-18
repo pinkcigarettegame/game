@@ -1,50 +1,34 @@
-// Visitor Counter - Tracks historic web users for Pink Cigarette Game
-// Uses localStorage for local tracking + CountAPI for global persistent count
+// Visitor Counter - Tracks players worldwide for Pink Cigarette Game
+// Powered by GoatCounter (https://pinkcig7.goatcounter.com)
+// Tracks page views, referral sources, and displays player count on start screen
 (function() {
     'use strict';
 
-    const STORAGE_KEY = 'pinkcigarette_visitor_id';
-    const VISIT_LOG_KEY = 'pinkcigarette_visit_log';
-    const COUNTER_NAMESPACE = 'pinkcigarettegame';
-    const COUNTER_KEY = 'visitors';
+    const GOATCOUNTER_SITE = 'pinkcig7';
+    const GOATCOUNTER_API = `https://${GOATCOUNTER_SITE}.goatcounter.com`;
 
-    // Generate a unique visitor ID if this is a new visitor
-    function getOrCreateVisitorId() {
-        let id = localStorage.getItem(STORAGE_KEY);
-        if (!id) {
-            id = 'v_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-            localStorage.setItem(STORAGE_KEY, id);
-        }
-        return id;
-    }
+    let historicCount = null;
+    let onlineCount = null;
 
-    // Log this visit locally
-    function logVisit() {
-        const log = JSON.parse(localStorage.getItem(VISIT_LOG_KEY) || '[]');
-        log.push({
-            time: new Date().toISOString(),
-            id: getOrCreateVisitorId()
-        });
-        // Keep only last 100 entries to avoid bloating localStorage
-        if (log.length > 100) log.splice(0, log.length - 100);
-        localStorage.setItem(VISIT_LOG_KEY, JSON.stringify(log));
-        return log.length;
-    }
-
-    // Check if this is a first-time visitor (never seen before)
-    function isNewVisitor() {
-        return !localStorage.getItem(STORAGE_KEY);
-    }
-
-    // Update the visitor counter display
-    function updateDisplay(count, isGlobal) {
+    // Update the visitor counter display on the start screen
+    function updateDisplay(historic, online) {
         const el = document.getElementById('visitor-counter');
         if (!el) return;
 
-        const label = isGlobal ? 'historic players' : 'visits';
-        el.innerHTML = `👥 <span style="color:#ffcc00; font-weight:bold;">${count.toLocaleString()}</span> ${label}`;
-        
-        // Add a subtle glow animation
+        let html = '';
+        if (historic !== null && historic > 0) {
+            html += `🌍 <span style="color:#ffcc00; font-weight:bold;">${historic.toLocaleString()}</span> historic players`;
+        }
+        if (online !== null && online > 0) {
+            if (html) html += ' &nbsp;|&nbsp; ';
+            html += `🟢 <span style="color:#44ff88; font-weight:bold;">${online}</span> online now`;
+        }
+        if (!html) {
+            html = '🌍 Counting players...';
+        }
+        el.innerHTML = html;
+
+        // Subtle glow animation
         el.style.transition = 'text-shadow 0.5s ease';
         el.style.textShadow = '0 0 12px rgba(255,204,0,0.8)';
         setTimeout(() => {
@@ -52,77 +36,87 @@
         }, 1000);
     }
 
-    // Try to fetch and increment global counter using CountAPI
-    function fetchGlobalCount() {
-        const isNew = isNewVisitor();
-        const localVisits = logVisit();
-
-        // Use CountAPI.xyz to track global visitor count
-        // This hits the API endpoint which increments and returns the count
-        const apiUrl = `https://api.countapi.xyz/hit/${COUNTER_NAMESPACE}/${COUNTER_KEY}`;
-        
-        fetch(apiUrl)
-            .then(response => {
-                if (!response.ok) throw new Error('CountAPI unavailable');
-                return response.json();
-            })
-            .then(data => {
-                if (data && typeof data.value === 'number') {
-                    updateDisplay(data.value, true);
-                } else {
-                    throw new Error('Invalid response');
+    // Fetch total visitor count from GoatCounter's public counter API
+    // Uses the no-auth JSON endpoint: /counter/TOTAL.json
+    async function fetchGoatCounterTotal() {
+        try {
+            const response = await fetch(`${GOATCOUNTER_API}/counter/TOTAL.json`);
+            if (!response.ok) throw new Error(`GoatCounter API returned ${response.status}`);
+            const data = await response.json();
+            // GoatCounter returns { count: "1,234" } with formatted string
+            if (data && data.count) {
+                // Parse the formatted count string (e.g., "1,234" -> 1234)
+                const count = parseInt(data.count.replace(/,/g, ''), 10);
+                if (!isNaN(count)) {
+                    console.log(`[Visitor Counter] GoatCounter total: ${count}`);
+                    return count;
                 }
-            })
-            .catch(() => {
-                // CountAPI failed - try alternative counter (hits.seeyoufarm.com badge API)
-                tryAlternativeCounter(localVisits);
-            });
+            }
+            throw new Error('Invalid GoatCounter response');
+        } catch (e) {
+            console.warn('[Visitor Counter] GoatCounter API error:', e.message);
+            return null;
+        }
     }
 
-    // Alternative: Use a simple JSON bin or fall back to local count
-    function tryAlternativeCounter(localVisits) {
-        // Try hits.dwyl.io as alternative
-        const altUrl = `https://hits.dwyl.io/pinkcigarettegame/game.json`;
-        
-        fetch(altUrl)
-            .then(response => {
-                if (!response.ok) throw new Error('Alt counter unavailable');
-                return response.json();
-            })
-            .then(data => {
-                if (data && (data.count || data.uniques)) {
-                    updateDisplay(data.count || data.uniques, true);
-                } else {
-                    throw new Error('Invalid alt response');
-                }
-            })
-            .catch(() => {
-                // All external APIs failed - use localStorage count with estimate
-                // Read from localStorage how many unique sessions we've seen
-                const sessions = getLocalSessionCount();
-                updateDisplay(sessions, false);
-            });
+    // Get real-time online player count from the multiplayer system
+    function getOnlinePlayerCount() {
+        if (window.mp && typeof window.mp.getPlayerCount === 'function') {
+            return window.mp.getPlayerCount();
+        }
+        return 0;
     }
 
-    // Count unique local sessions (fallback when APIs are unavailable)
-    function getLocalSessionCount() {
-        const log = JSON.parse(localStorage.getItem(VISIT_LOG_KEY) || '[]');
-        // Count unique days visited as a rough "session" count
-        const uniqueDays = new Set(log.map(entry => entry.time.split('T')[0]));
-        return Math.max(uniqueDays.size, 1);
+    // Poll the multiplayer system for online player count
+    function startOnlineTracking() {
+        setInterval(() => {
+            const online = getOnlinePlayerCount();
+            if (online > 0) {
+                onlineCount = online;
+                updateDisplay(historicCount, onlineCount);
+            }
+        }, 3000);
     }
 
     // Initialize on page load
-    function init() {
+    async function init() {
         const el = document.getElementById('visitor-counter');
         if (!el) return;
 
         // Show loading state
-        el.innerHTML = '👥 Counting players...';
+        el.innerHTML = '🌍 Counting players worldwide...';
 
         // Small delay to not block page load
-        setTimeout(fetchGlobalCount, 500);
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Fetch the total visitor count from GoatCounter
+        historicCount = await fetchGoatCounterTotal();
+
+        if (historicCount !== null) {
+            updateDisplay(historicCount, null);
+        } else {
+            // If GoatCounter API is unavailable, show a generic message
+            el.innerHTML = '🌍 Players worldwide — <a href="https://pinkcig7.goatcounter.com" target="_blank" rel="noopener" style="color:#ff88cc; text-decoration:underline;">view stats</a>';
+        }
+
+        // Start tracking online players from multiplayer system
+        startOnlineTracking();
     }
+
+    // Expose for external use (e.g., multiplayer system can trigger updates)
+    window.visitorCounter = {
+        refresh: function() {
+            onlineCount = getOnlinePlayerCount();
+            updateDisplay(historicCount, onlineCount);
+        },
+        getHistoricCount: function() { return historicCount; },
+        getOnlineCount: function() { return onlineCount; },
+        // Allow manual refresh of GoatCounter data
+        refreshTotal: async function() {
+            historicCount = await fetchGoatCounterTotal();
+            updateDisplay(historicCount, onlineCount);
+        }
+    };
 
     // Run when DOM is ready
     if (document.readyState === 'loading') {
