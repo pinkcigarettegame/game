@@ -19,6 +19,7 @@
                    onclick="event.stopPropagation();" />
         </div>
         <p>Click to Play</p>
+        <div id="visitor-counter" style="font-size: 13px; color: #ff88cc; margin-top: 6px; min-height: 18px; font-family: 'Courier New', monospace; text-shadow: 0 0 6px rgba(255,105,180,0.5);">👥 Loading visitor count...</div>
         <div id="mp-status" style="font-size: 14px; color: #ffaa00; margin-top: 8px; min-height: 20px;">🌐 Multiplayer</div>
         <button id="settings-btn-start" onclick="event.stopPropagation(); window.settingsUI && window.settingsUI.open();">⚙️ Controls</button>
         <div class="controls-info">
@@ -70,6 +71,9 @@
 
     <!-- Shop Prompt (near crypto liquor store) -->
     <div id="shop-prompt" style="display:none;">Press <strong>V</strong> to Shop 🪙₿</div>
+
+    <!-- Strip Club Prompt (near owned strip club) -->
+    <div id="club-prompt" style="display:none; position:fixed; bottom:120px; left:50%; transform:translateX(-50%); background:rgba(20,0,30,0.9); color:#ff1493; padding:10px 20px; border-radius:8px; font-family:'Courier New',monospace; font-size:14px; font-weight:bold; text-align:center; border:2px solid #ff00ff; text-shadow:0 0 8px #ff1493; z-index:200; pointer-events:none;"></div>
 
     <!-- Shop Menu Overlay -->
     <div id="shop-menu" style="display:none;">
@@ -138,6 +142,9 @@
     <!-- PeerJS for P2P Multiplayer -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     
+    <!-- Visitor Counter -->
+    <script src="js/visitor-counter.js"></script>
+    
     <!-- Game Scripts -->
     <script src="js/crypto-prices.js"></script>
     <script src="js/simplex-noise.js"></script>
@@ -159,6 +166,7 @@
     <script src="js/liquorstore.js"></script>
     <script src="js/billboard.js"></script>
     <script src="js/stripclub.js"></script>
+    <script src="js/missions.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/multiplayer.js"></script>
     <script src="js/remote-player.js"></script>
