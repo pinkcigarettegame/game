@@ -577,6 +577,9 @@
             // Update car physics
             challenger.updateDriving(dt, input);
             
+            // Update skid mark fading
+            challenger.updateSkidMarks(dt);
+            
             // Update world around car position
             world.update(challenger.position.x, challenger.position.z);
             world.animateWater(dt);

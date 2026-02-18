@@ -21,6 +21,16 @@ class DodgeChallenger {
         this.maxSteer = 2.5;      // Max steering rate (rad/sec)
         this.wheelBase = 3.0;     // Distance between axles for turning
         
+        // Drift state
+        this.drifting = false;
+        this.driftAngle = 0;        // Sideways slide angle offset
+        this.driftMomentum = 0;      // How much sideways momentum we have
+        this.driftIntensity = 0;     // 0-1 how hard we're drifting (for effects)
+        this.skidMarks = [];         // Array of skid mark meshes
+        this.smokeParticles = [];    // Array of active smoke particles
+        this.maxSkidMarks = 200;     // Max skid marks before cleanup
+        this.skidMarkTimer = 0;      // Timer for spawning skid marks
+        
         // Vertical physics / suspension
         this.verticalVelocity = 0;
         this.groundY = y;           // Current ground level
@@ -308,8 +318,46 @@ class DodgeChallenger {
             }
         }
 
-        // Handbrake
-        if (brakeKey) {
+        // === DRIFT / HANDBRAKE SYSTEM ===
+        const wasDrifting = this.drifting;
+        
+        if (brakeKey && Math.abs(this.speed) > 3) {
+            // Handbrake engaged at speed - initiate drift!
+            this.drifting = true;
+            
+            // Slow down but not as aggressively as normal brake
+            if (this.speed > 0) {
+                this.speed -= this.brakeForce * 0.8 * dt;
+                if (this.speed < 0) this.speed = 0;
+            } else if (this.speed < 0) {
+                this.speed += this.brakeForce * 0.8 * dt;
+                if (this.speed > 0) this.speed = 0;
+            }
+            
+            // Build drift momentum based on steering input
+            const driftBuildRate = 4.0;
+            if (aKey) {
+                this.driftMomentum += driftBuildRate * dt;
+            } else if (dKey) {
+                this.driftMomentum -= driftBuildRate * dt;
+            } else {
+                // No steering - drift momentum carries but decays slowly
+                this.driftMomentum *= (1 - 0.5 * dt);
+            }
+            
+            // Clamp drift momentum
+            const maxDriftMomentum = 2.5;
+            this.driftMomentum = Math.max(-maxDriftMomentum, Math.min(maxDriftMomentum, this.driftMomentum));
+            
+            // Apply drift angle (rear slides out)
+            this.driftAngle += this.driftMomentum * dt;
+            
+            // Drift intensity for visual effects (0-1)
+            this.driftIntensity = Math.min(1, Math.abs(this.driftMomentum) / maxDriftMomentum * 0.7 + Math.abs(this.speed) / this.maxSpeed * 0.3);
+            
+        } else if (brakeKey) {
+            // Normal brake at low speed
+            this.drifting = false;
             if (this.speed > 0) {
                 this.speed -= this.brakeForce * 1.5 * dt;
                 if (this.speed < 0) this.speed = 0;
@@ -317,11 +365,35 @@ class DodgeChallenger {
                 this.speed += this.brakeForce * 1.5 * dt;
                 if (this.speed > 0) this.speed = 0;
             }
+        } else {
+            // No brake - recover from drift
+            this.drifting = false;
+        }
+        
+        // Drift recovery when not braking
+        if (!this.drifting) {
+            // Drift angle recovers toward 0
+            this.driftAngle *= (1 - 3.0 * dt);
+            if (Math.abs(this.driftAngle) < 0.01) this.driftAngle = 0;
+            
+            // Drift momentum decays
+            this.driftMomentum *= (1 - 5.0 * dt);
+            if (Math.abs(this.driftMomentum) < 0.01) this.driftMomentum = 0;
+            
+            // Drift intensity fades
+            this.driftIntensity *= (1 - 4.0 * dt);
+            if (this.driftIntensity < 0.01) this.driftIntensity = 0;
         }
 
-        // Steering (only when moving)
+        // Steering (enhanced during drift)
         if (Math.abs(this.speed) > 0.1) {
-            const steerRate = this.maxSteer * Math.min(1, 5 / (Math.abs(this.speed) + 1));
+            let steerRate;
+            if (this.drifting) {
+                // During drift: much more responsive steering, counter-steer feel
+                steerRate = this.maxSteer * 1.8;
+            } else {
+                steerRate = this.maxSteer * Math.min(1, 5 / (Math.abs(this.speed) + 1));
+            }
             if (aKey) {
                 this.rotation += steerRate * dt * Math.sign(this.speed);
             }
@@ -330,13 +402,23 @@ class DodgeChallenger {
             }
         }
 
-        // Move car in its facing direction
+        // Move car in its facing direction + drift sideways slide
         // Car faces -Z in local space, rotation is around Y
+        const effectiveRotation = this.rotation + this.driftAngle * 0.3; // Drift offsets movement direction
         const moveX = -Math.sin(this.rotation) * this.speed * dt;
         const moveZ = -Math.cos(this.rotation) * this.speed * dt;
+        
+        // Add sideways slide from drift
+        const slideX = Math.cos(this.rotation) * this.driftAngle * Math.abs(this.speed) * 0.15 * dt;
+        const slideZ = -Math.sin(this.rotation) * this.driftAngle * Math.abs(this.speed) * 0.15 * dt;
 
-        this.position.x += moveX;
-        this.position.z += moveZ;
+        this.position.x += moveX + slideX;
+        this.position.z += moveZ + slideZ;
+        
+        // === DRIFT EFFECTS (smoke + skid marks) ===
+        if (this.onGround) {
+            this.updateDriftEffects(dt, brakeKey);
+        }
 
         // === TERRAIN-AWARE GROUND FOLLOWING WITH TILT ===
         
@@ -427,13 +509,20 @@ class DodgeChallenger {
             this.pitch *= (1 - 0.5 * dt);
             this.roll *= (1 - 0.5 * dt);
         }
+        
+        // Add drift-induced body roll (car leans into the drift)
+        let driftRoll = 0;
+        if (this.drifting || Math.abs(this.driftAngle) > 0.01) {
+            driftRoll = -this.driftAngle * 0.12; // Lean opposite to drift direction
+            driftRoll = Math.max(-0.2, Math.min(0.2, driftRoll)); // Clamp
+        }
 
         // Update mesh position and rotation
         this.mesh.position.copy(this.position);
         this.mesh.rotation.order = 'YXZ';
-        this.mesh.rotation.y = this.rotation;
+        this.mesh.rotation.y = this.rotation + this.driftAngle * 0.15; // Visual yaw offset during drift
         this.mesh.rotation.x = this.pitch;
-        this.mesh.rotation.z = this.roll;
+        this.mesh.rotation.z = this.roll + driftRoll;
     }
 
     // Get the ideal 3rd person camera position
@@ -837,7 +926,230 @@ class DodgeChallenger {
         return group;
     }
 
+    // === DRIFT EFFECTS: Tire smoke + Skid marks ===
+    updateDriftEffects(dt, brakeKey) {
+        const absSpeed = Math.abs(this.speed);
+        const shouldSmoke = (this.drifting && absSpeed > 3) || (brakeKey && absSpeed > 6);
+        
+        if (!shouldSmoke) {
+            this.skidMarkTimer = 0;
+            return;
+        }
+        
+        // Determine effect intensity
+        const intensity = this.drifting ? this.driftIntensity : Math.min(1, (absSpeed - 6) / 12);
+        
+        // Timer for spawning effects (don't spawn every frame)
+        this.skidMarkTimer += dt;
+        const spawnInterval = this.drifting ? 0.03 : 0.05; // Faster spawn during drift
+        
+        if (this.skidMarkTimer >= spawnInterval) {
+            this.skidMarkTimer = 0;
+            
+            // Get rear wheel world positions for effects
+            const wo = this.wheelOffsets;
+            const rlPos = this.getWheelWorldPos(wo.rearLeft.x, wo.rearLeft.z);
+            const rrPos = this.getWheelWorldPos(wo.rearRight.x, wo.rearRight.z);
+            const groundY = this.position.y + 0.02;
+            
+            // Spawn skid marks at rear wheels
+            this.spawnSkidMark(rlPos.x, groundY, rlPos.z, intensity);
+            this.spawnSkidMark(rrPos.x, groundY, rrPos.z, intensity);
+            
+            // Spawn tire smoke at rear wheels
+            this.spawnTireSmoke(rlPos.x, this.position.y + 0.3, rlPos.z, intensity);
+            this.spawnTireSmoke(rrPos.x, this.position.y + 0.3, rrPos.z, intensity);
+            
+            // Extra smoke during heavy drift
+            if (this.drifting && intensity > 0.5) {
+                // Spawn additional smoke puffs between the wheels
+                const midX = (rlPos.x + rrPos.x) / 2;
+                const midZ = (rlPos.z + rrPos.z) / 2;
+                this.spawnTireSmoke(midX, this.position.y + 0.5, midZ, intensity * 0.7);
+            }
+        }
+        
+        // Play tire screech sound during drift
+        if (this.drifting && intensity > 0.3) {
+            this.playTireScreech(dt, intensity);
+        }
+    }
+    
+    // Spawn a single skid mark on the ground
+    spawnSkidMark(x, y, z, intensity) {
+        // Skid mark is a thin dark strip on the ground
+        const length = 0.3 + intensity * 0.5;
+        const width = 0.15 + intensity * 0.1;
+        const geo = new THREE.BoxGeometry(width, 0.015, length);
+        const darkness = 0.05 + Math.random() * 0.1;
+        const mat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(darkness, darkness, darkness),
+            transparent: true,
+            opacity: 0.4 + intensity * 0.4
+        });
+        const mark = new THREE.Mesh(geo, mat);
+        mark.position.set(x, y, z);
+        mark.rotation.y = this.rotation + this.driftAngle * 0.2;
+        this.scene.add(mark);
+        
+        // Track for cleanup
+        this.skidMarks.push({
+            mesh: mark,
+            geo: geo,
+            mat: mat,
+            life: 0,
+            maxLife: 8 + Math.random() * 4 // Fade over 8-12 seconds
+        });
+        
+        // Clean up old skid marks if too many
+        while (this.skidMarks.length > this.maxSkidMarks) {
+            const old = this.skidMarks.shift();
+            this.scene.remove(old.mesh);
+            old.geo.dispose();
+            old.mat.dispose();
+        }
+        
+        // Animate skid mark fade (handled in updateSkidMarks, called from animate loop)
+    }
+    
+    // Spawn a tire smoke puff
+    spawnTireSmoke(x, y, z, intensity) {
+        const size = 0.4 + Math.random() * 0.8 * intensity;
+        const geo = new THREE.BoxGeometry(size, size * 0.6, size);
+        const brightness = 0.7 + Math.random() * 0.3;
+        const mat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(brightness, brightness, brightness * 0.95),
+            transparent: true,
+            opacity: 0.3 + intensity * 0.3
+        });
+        const smoke = new THREE.Mesh(geo, mat);
+        smoke.position.set(
+            x + (Math.random() - 0.5) * 0.5,
+            y,
+            z + (Math.random() - 0.5) * 0.5
+        );
+        smoke.rotation.y = Math.random() * Math.PI * 2;
+        this.scene.add(smoke);
+        
+        // Animate the smoke puff rising and fading
+        const startOpacity = mat.opacity;
+        const vx = (Math.random() - 0.5) * 1.5;
+        const vy = 1.5 + Math.random() * 2.0;
+        const vz = (Math.random() - 0.5) * 1.5;
+        // Add car's backward direction to smoke drift
+        const carBackX = Math.sin(this.rotation) * Math.abs(this.speed) * 0.15;
+        const carBackZ = Math.cos(this.rotation) * Math.abs(this.speed) * 0.15;
+        let frame = 0;
+        const maxFrames = 30 + Math.floor(Math.random() * 20);
+        
+        const animateSmoke = () => {
+            frame++;
+            const t = frame / maxFrames;
+            
+            // Rise and drift
+            smoke.position.x += (vx + carBackX) * 0.016;
+            smoke.position.y += vy * 0.016;
+            smoke.position.z += (vz + carBackZ) * 0.016;
+            
+            // Slow down vertical rise
+            // vy *= 0.98; // Can't reassign const, handled by natural deceleration
+            
+            // Expand as it rises
+            const scale = 1 + t * 2.0;
+            smoke.scale.set(scale, scale * 0.7, scale);
+            
+            // Fade out
+            mat.opacity = startOpacity * (1 - t);
+            
+            // Slight rotation for visual variety
+            smoke.rotation.y += 0.5 * 0.016;
+            
+            if (frame < maxFrames && mat.opacity > 0.01) {
+                requestAnimationFrame(animateSmoke);
+            } else {
+                this.scene.remove(smoke);
+                geo.dispose();
+                mat.dispose();
+            }
+        };
+        requestAnimationFrame(animateSmoke);
+    }
+    
+    // Update skid mark fading (call this from the game loop)
+    updateSkidMarks(dt) {
+        for (let i = this.skidMarks.length - 1; i >= 0; i--) {
+            const mark = this.skidMarks[i];
+            mark.life += dt;
+            
+            // Start fading after half the life
+            if (mark.life > mark.maxLife * 0.5) {
+                const fadeProgress = (mark.life - mark.maxLife * 0.5) / (mark.maxLife * 0.5);
+                mark.mat.opacity = Math.max(0, mark.mat.opacity * (1 - fadeProgress * 0.05));
+            }
+            
+            // Remove when fully faded
+            if (mark.life >= mark.maxLife) {
+                this.scene.remove(mark.mesh);
+                mark.geo.dispose();
+                mark.mat.dispose();
+                this.skidMarks.splice(i, 1);
+            }
+        }
+    }
+    
+    // Tire screech sound effect
+    playTireScreech(dt, intensity) {
+        // Throttle sound - don't play too often
+        if (!this._screechCooldown) this._screechCooldown = 0;
+        this._screechCooldown -= dt;
+        if (this._screechCooldown > 0) return;
+        this._screechCooldown = 0.15 + Math.random() * 0.1; // Play every ~150-250ms
+        
+        try {
+            const ctx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
+            const t = ctx.currentTime;
+            
+            // High-pitched filtered noise for tire screech
+            const bufSize = Math.floor(ctx.sampleRate * (0.08 + intensity * 0.12));
+            const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+            const data = buf.getChannelData(0);
+            for (let i = 0; i < bufSize; i++) {
+                // Mix of noise and tonal component for realistic screech
+                const noise = (Math.random() * 2 - 1);
+                const tone = Math.sin(i / ctx.sampleRate * Math.PI * 2 * (800 + intensity * 600)) * 0.3;
+                data[i] = (noise * 0.7 + tone) * Math.exp(-i / (ctx.sampleRate * 0.06));
+            }
+            
+            const source = ctx.createBufferSource();
+            source.buffer = buf;
+            
+            // Bandpass filter for tire-like sound
+            const bp = ctx.createBiquadFilter();
+            bp.type = 'bandpass';
+            bp.frequency.setValueAtTime(1500 + intensity * 1000, t);
+            bp.Q.setValueAtTime(2 + intensity * 3, t);
+            
+            const gain = ctx.createGain();
+            const volume = 0.04 + intensity * 0.08; // Subtle but audible
+            gain.gain.setValueAtTime(volume, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15 + intensity * 0.1);
+            
+            source.connect(bp);
+            bp.connect(gain);
+            gain.connect(ctx.destination);
+            source.start(t);
+        } catch(e) {}
+    }
+
     dispose() {
+        // Clean up skid marks
+        for (const mark of this.skidMarks) {
+            this.scene.remove(mark.mesh);
+            mark.geo.dispose();
+            mark.mat.dispose();
+        }
+        this.skidMarks = [];
+        
         if (this.mesh) {
             this.scene.remove(this.mesh);
             this.mesh.traverse(child => {
