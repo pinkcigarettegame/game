@@ -829,6 +829,8 @@
                         }
                         if (deposited > 0) {
                             nearClub.depositStrippers(deposited);
+                            // === MISSION: Strippers deposited ===
+                            if (missionSystem) missionSystem.onStrippersDeposited(deposited);
                             const inviteMsg = document.getElementById('invite-message');
                             if (inviteMsg) {
                                 inviteMsg.textContent = `💃 ${deposited} HOOKERS DEPOSITED! Income: $${nearClub.getIncomePerSecond()}/s 💰`;
@@ -1231,6 +1233,9 @@
         // Convert blocks/sec to "mph" (just multiply for fun factor)
         const mph = Math.abs(Math.round(challenger.speed * 3.6));
         speedDisplay.textContent = mph + ' mph';
+
+        // === MISSION: Track top speed ===
+        if (missionSystem && mph > 0) missionSystem.onSpeedReached(mph);
         
         // Color based on speed
         if (mph > 50) {
@@ -1639,10 +1644,14 @@
                     launchNPCRagdoll(ch.mesh, ch.position, carSpeed);
                     crackheadSpawner.crackheads.splice(i, 1);
                     hitSomething = true;
+                    // === MISSION: Crackhead killed by car ===
+                    if (missionSystem) missionSystem.onCrackheadKilled();
                     hitCount++;
                     if (glock) {
                         glock.money += 2;
                         glock.spawnDollarBill();
+                        // === MISSION: Money earned from crackhead roadkill ===
+                        if (missionSystem) missionSystem.onMoneyEarned(2);
                     }
                 }
             }
@@ -1664,6 +1673,8 @@
                         if (glock) {
                             glock.money += 15;
                             glock.spawnDollarBill();
+                            // === MISSION: Money earned + motorcycle destroyed ===
+                            if (missionSystem) { missionSystem.onMoneyEarned(15); missionSystem.onMotorcycleDestroyed(); }
                         }
                         if (copSpawner) copSpawner.addWanted(2);
                     } else {
@@ -1678,6 +1689,8 @@
                             if (glock) {
                                 glock.money += 15;
                                 glock.spawnDollarBill();
+                                // === MISSION: Money earned + motorcycle destroyed ===
+                                if (missionSystem) { missionSystem.onMoneyEarned(15); missionSystem.onMotorcycleDestroyed(); }
                             }
                             if (copSpawner) copSpawner.addWanted(2);
                         } else {
@@ -1707,8 +1720,8 @@
                             glock.spawnDollarBill();
                         }
                         if (copSpawner) copSpawner.addWanted(2);
-                        // === MISSION: Cop killed by car ===
-                        if (missionSystem) missionSystem.onCopKilled();
+                        // === MISSION: Cop killed by car + money earned ===
+                        if (missionSystem) { missionSystem.onCopKilled(); missionSystem.onMoneyEarned(10); }
                     } else {
                         // Low speed - push them with smooth physics
                         cop.health -= Math.ceil(carSpeed * 3);
@@ -1732,8 +1745,8 @@
                                 glock.spawnDollarBill();
                             }
                             if (copSpawner) copSpawner.addWanted(2);
-                            // === MISSION: Cop killed by car ===
-                            if (missionSystem) missionSystem.onCopKilled();
+                            // === MISSION: Cop killed by car + money earned ===
+                            if (missionSystem) { missionSystem.onCopKilled(); missionSystem.onMoneyEarned(10); }
                         } else {
                             if (copSpawner) copSpawner.addWanted(1);
                         }
@@ -2336,6 +2349,9 @@
                     const success = activeShopStore.purchase(i, glock, player, stripperSpawner);
 
                     if (success) {
+                        // === MISSION: Shop purchase ===
+                        if (missionSystem) missionSystem.onShopPurchase();
+
                         // Check if moonshine (high effect)
                         if (activeShopStore._lastPurchaseEffect === 'high') {
                             highLevel = Math.min(1, highLevel + 0.6);

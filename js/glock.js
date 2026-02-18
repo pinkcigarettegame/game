@@ -482,6 +482,8 @@ class Glock {
                             setTimeout(() => this.spawnDollarBill(), d * 80);
                         }
                         this.money += 3;
+                        // === MISSION: Crackhead killed + money earned ===
+                        if (window.missionSystem) { window.missionSystem.onCrackheadKilled(); window.missionSystem.onMoneyEarned(3); }
                         ch.dispose();
                         this.crackheadSpawner.crackheads.splice(i, 1);
                         this.registerKill();
@@ -526,8 +528,8 @@ class Glock {
                         this.copSpawner.cops.splice(i, 1);
                         this.copSpawner.addWanted(1);
                         this.registerKill();
-                        // === MISSION: Cop killed by glock ===
-                        if (window.missionSystem) window.missionSystem.onCopKilled();
+                        // === MISSION: Cop killed by glock + money earned ===
+                        if (window.missionSystem) { window.missionSystem.onCopKilled(); window.missionSystem.onMoneyEarned(copMoney); }
                     } else {
                         // Cop shouts when hit
                         cop.playShout();
@@ -558,6 +560,8 @@ class Glock {
                             setTimeout(() => this.spawnDollarBill(), d * 70);
                         }
                         this.money += motoMoney;
+                        // === MISSION: Motorcycle destroyed + money earned ===
+                        if (window.missionSystem) { window.missionSystem.onMotorcycleDestroyed(); window.missionSystem.onMoneyEarned(motoMoney); }
                         moto.dispose();
                         this.copSpawner.motorcycles.splice(i, 1);
                         this.copSpawner.addWanted(2);
@@ -1578,6 +1582,9 @@ class Glock {
     registerKill() {
         this.killStreak++;
         this.killStreakTimer = this.killStreakTimeout;
+
+        // === MISSION: Track kill streak ===
+        if (window.missionSystem) window.missionSystem.onKillStreak(this.killStreak);
 
         if (this.killStreak >= 2) {
             const index = Math.min(this.killStreak, this.killStreakNames.length - 1);

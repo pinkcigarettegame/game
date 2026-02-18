@@ -512,10 +512,13 @@ class CopSpawner {
         this.player = player;
         this.cops = [];
         this.motorcycles = []; // Police motorcycles at 3+ stars
+        this.helicopter = null; // Police helicopter at 5 stars (max 1)
         this.spawnCooldown = 0;
         this.spawnInterval = 8; // Slower spawning
         this.motorcycleSpawnCooldown = 0;
         this.motorcycleSpawnInterval = 6; // Fast motorcycle spawning for pursuit
+        this.helicopterSpawnCooldown = 0;
+        this.helicopterSpawnInterval = 3; // Quick spawn once 5 stars hit
         this.wantedLevel = 0; // 0-5 stars
         this.wantedDecayTimer = 0;
         this.wantedDecayInterval = 12; // seconds to lose 1 star
@@ -631,6 +634,33 @@ class CopSpawner {
                 }
             }
         }
+
+        // === POLICE HELICOPTER at 5 stars (max 1) ===
+        this.helicopterSpawnCooldown -= dt;
+        if (this.wantedLevel >= 5 && !this.helicopter && this.helicopterSpawnCooldown <= 0) {
+            this.trySpawnHelicopter(playerPos);
+            this.helicopterSpawnCooldown = this.helicopterSpawnInterval;
+        }
+
+        // Update helicopter
+        if (this.helicopter) {
+            this.helicopter.update(dt, playerPos, this.wantedLevel);
+
+            if (!this.helicopter.alive) {
+                this.helicopter.dispose();
+                this.helicopter = null;
+            }
+        }
+
+        // Despawn helicopter when wanted level drops below 5
+        if (this.wantedLevel < 5 && this.helicopter) {
+            // Let it fly away naturally (it stops chasing at < 5 stars and drifts up)
+            // Remove once it's far enough away or high enough
+            if (this.helicopter.position.y > 80 || this.helicopter.position.distanceTo(playerPos) > 200) {
+                this.helicopter.dispose();
+                this.helicopter = null;
+            }
+        }
     }
 
     trySpawn(playerPos) {
@@ -650,24 +680,73 @@ class CopSpawner {
     }
 
     trySpawnMotorcycle(playerPos) {
-        // Spawn motorcycle cops from further away (they're fast, so they close distance quickly)
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 30 + Math.random() * 20;
-        const sx = playerPos.x + Math.cos(angle) * dist;
-        const sz = playerPos.z + Math.sin(angle) * dist;
-        const sy = this.world.getSpawnHeight(sx, sz);
+        // Spawn motorcycle cops ON a road for realistic pursuit
+        const ROAD_SPACING = 128;
+        const ROAD_WIDTH = 5;
+
+        // Find roads near the player
+        const playerRoadX = Math.round(playerPos.x / ROAD_SPACING) * ROAD_SPACING;
+        const playerRoadZ = Math.round(playerPos.z / ROAD_SPACING) * ROAD_SPACING;
+
+        // Pick a random road segment 1-2 road spacings away from the player
+        const roadOffsets = [-2, -1, 1, 2];
+        const useXRoad = Math.random() > 0.5;
+        let sx, sz, spawnRotation;
+
+        if (useXRoad) {
+            // Spawn on an X-aligned road (runs along X, at a Z-road position)
+            const zOffset = roadOffsets[Math.floor(Math.random() * roadOffsets.length)];
+            sz = playerRoadZ + zOffset * ROAD_SPACING;
+            // Random position along that road, offset from player
+            const xDir = Math.random() > 0.5 ? 1 : -1;
+            sx = playerPos.x + xDir * (40 + Math.random() * 60);
+            // Apply noise offset to match actual road center
+            const zRoadOffset = this.world.noise ? this.world.noise.noise2D(sx * 0.005, Math.round(sz / ROAD_SPACING) * ROAD_SPACING * 0.1) * 4 : 0;
+            sz += zRoadOffset;
+            // Face along X axis toward player
+            spawnRotation = (playerPos.x > sx) ? Math.PI : 0;
+        } else {
+            // Spawn on a Z-aligned road (runs along Z, at an X-road position)
+            const xOffset = roadOffsets[Math.floor(Math.random() * roadOffsets.length)];
+            sx = playerRoadX + xOffset * ROAD_SPACING;
+            // Random position along that road, offset from player
+            const zDir = Math.random() > 0.5 ? 1 : -1;
+            sz = playerPos.z + zDir * (40 + Math.random() * 60);
+            // Apply noise offset to match actual road center
+            const xRoadOffset = this.world.noise ? this.world.noise.noise2D(Math.round(sx / ROAD_SPACING) * ROAD_SPACING * 0.1, sz * 0.005) * 4 : 0;
+            sx += xRoadOffset;
+            // Face along Z axis toward player
+            spawnRotation = (playerPos.z > sz) ? Math.PI * 0.5 : -Math.PI * 0.5;
+        }
+
+        // Get road surface height
+        let sy;
+        if (this.world.getRoadSurfaceHeight) {
+            sy = this.world.getRoadSurfaceHeight(sx, sz);
+        }
+        if (sy === null || sy === undefined) {
+            sy = this.world.getSpawnHeight(sx, sz);
+        }
 
         if (sy <= WATER_LEVEL + 1) return;
-        const groundBlock = this.world.getBlock(Math.floor(sx), sy - 1, Math.floor(sz));
-        if (groundBlock === BlockType.AIR || groundBlock === BlockType.WATER) return;
 
         const moto = new PoliceMotorcycle(this.world, this.scene, sx, sy, sz, this.player);
-        // Point motorcycle toward the player initially
-        const toPlayer = new THREE.Vector3().subVectors(playerPos, moto.position);
-        toPlayer.y = 0;
-        moto.rotation = Math.atan2(toPlayer.x, toPlayer.z);
-        moto.speed = 12; // Start fast - already in pursuit!
+        // Point motorcycle along the road, generally toward the player
+        moto.rotation = spawnRotation;
+        moto.speed = 15; // Start fast - already in pursuit on the road!
         this.motorcycles.push(moto);
+    }
+
+    trySpawnHelicopter(playerPos) {
+        // Spawn helicopter high up, offset from player
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 60 + Math.random() * 40;
+        const sx = playerPos.x + Math.cos(angle) * dist;
+        const sz = playerPos.z + Math.sin(angle) * dist;
+        const sy = playerPos.y + 30 + Math.random() * 15; // High in the air
+
+        const heli = new PoliceHelicopter(this.world, this.scene, sx, sy, sz, this.player);
+        this.helicopter = heli;
     }
 
     getCount() {

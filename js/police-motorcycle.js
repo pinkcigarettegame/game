@@ -373,6 +373,125 @@ class PoliceMotorcycle {
         } catch(e) {}
     }
 
+    // Get road info for a world position (which road it's on/near, road center, direction)
+    getRoadInfo(wx, wz) {
+        var ROAD_SPACING = 128;
+        var ROAD_WIDTH = 5;
+
+        // Z-aligned road (runs along Z, spaced along X)
+        var xRoadBase = Math.round(wx / ROAD_SPACING) * ROAD_SPACING;
+        var xRoadOffset = this.world.noise.noise2D(xRoadBase * 0.1, wz * 0.005) * 4;
+        var xRoadCenter = xRoadBase + xRoadOffset;
+        var distFromXRoad = Math.abs(wx - xRoadCenter);
+
+        // X-aligned road (runs along X, spaced along Z)
+        var zRoadBase = Math.round(wz / ROAD_SPACING) * ROAD_SPACING;
+        var zRoadOffset = this.world.noise.noise2D(wx * 0.005, zRoadBase * 0.1) * 4;
+        var zRoadCenter = zRoadBase + zRoadOffset;
+        var distFromZRoad = Math.abs(wz - zRoadCenter);
+
+        var onXRoad = distFromXRoad <= ROAD_WIDTH;
+        var onZRoad = distFromZRoad <= ROAD_WIDTH;
+
+        return {
+            onRoad: onXRoad || onZRoad,
+            onXRoad: onXRoad,
+            onZRoad: onZRoad,
+            isIntersection: onXRoad && onZRoad,
+            xRoadCenter: xRoadCenter,
+            zRoadCenter: zRoadCenter,
+            distFromXRoad: distFromXRoad,
+            distFromZRoad: distFromZRoad,
+            nearestXRoadCenter: xRoadCenter,
+            nearestZRoadCenter: zRoadCenter,
+            roadSpacing: ROAD_SPACING,
+            roadWidth: ROAD_WIDTH
+        };
+    }
+
+    // Find the nearest road waypoint to navigate toward the player via roads
+    getNextRoadWaypoint(playerPos) {
+        var myRoad = this.getRoadInfo(this.position.x, this.position.z);
+        var playerRoad = this.getRoadInfo(playerPos.x, playerPos.z);
+        var ROAD_SPACING = 128;
+
+        // If we're on a road and the player is close (within attack range), go direct
+        var distToPlayer = this.position.distanceTo(playerPos);
+        if (distToPlayer < 20) {
+            return { x: playerPos.x, z: playerPos.z, direct: true };
+        }
+
+        // If we're on a road, navigate via the road network
+        if (myRoad.onRoad) {
+            // If at an intersection, decide which direction to go
+            if (myRoad.isIntersection) {
+                // At intersection: pick the road direction that gets us closer to the player
+                var dx = playerPos.x - this.position.x;
+                var dz = playerPos.z - this.position.z;
+
+                // Should we go along X-road (change Z) or Z-road (change X)?
+                if (Math.abs(dx) > Math.abs(dz)) {
+                    // Player is more offset in X - take the Z-aligned road (runs along X... wait, Z-aligned = runs along Z)
+                    // Z-aligned road changes Z position, X-aligned road changes X position
+                    // We want to reduce dx, so go along X-aligned road (which runs along X axis)
+                    return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
+                } else {
+                    // Player is more offset in Z - take the Z-aligned road
+                    return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
+                }
+            }
+
+            // On a Z-road (runs along Z axis): we can move in Z direction
+            // Navigate toward the nearest intersection that gets us closer to the player
+            if (myRoad.onXRoad && !myRoad.onZRoad) {
+                // On X-road (runs along X): navigate along X toward player, or toward nearest Z-road intersection
+                var playerDZ = playerPos.z - this.position.z;
+                if (Math.abs(playerDZ) < 10) {
+                    // Player is roughly on our road's Z level - just go along X toward them
+                    return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
+                } else {
+                    // Need to get to a Z-road to change our Z position
+                    // Find the nearest Z-road intersection along our current X-road
+                    var nearestZRoadX = Math.round(this.position.x / ROAD_SPACING) * ROAD_SPACING;
+                    // Pick the one in the direction of the player
+                    if ((playerPos.x - this.position.x) > 0 && nearestZRoadX < this.position.x) {
+                        nearestZRoadX += ROAD_SPACING;
+                    } else if ((playerPos.x - this.position.x) < 0 && nearestZRoadX > this.position.x) {
+                        nearestZRoadX -= ROAD_SPACING;
+                    }
+                    return { x: nearestZRoadX, z: myRoad.zRoadCenter, direct: false };
+                }
+            }
+
+            if (myRoad.onZRoad && !myRoad.onXRoad) {
+                // On Z-road (runs along Z): navigate along Z toward player, or toward nearest X-road intersection
+                var playerDX = playerPos.x - this.position.x;
+                if (Math.abs(playerDX) < 10) {
+                    // Player is roughly on our road's X level - just go along Z toward them
+                    return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
+                } else {
+                    // Need to get to an X-road to change our X position
+                    var nearestXRoadZ = Math.round(this.position.z / ROAD_SPACING) * ROAD_SPACING;
+                    if ((playerPos.z - this.position.z) > 0 && nearestXRoadZ < this.position.z) {
+                        nearestXRoadZ += ROAD_SPACING;
+                    } else if ((playerPos.z - this.position.z) < 0 && nearestXRoadZ > this.position.z) {
+                        nearestXRoadZ -= ROAD_SPACING;
+                    }
+                    return { x: myRoad.xRoadCenter, z: nearestXRoadZ, direct: false };
+                }
+            }
+        }
+
+        // Not on a road - navigate to the nearest road first
+        if (myRoad.distFromXRoad < myRoad.distFromZRoad) {
+            // Nearest road is Z-aligned (at xRoadCenter)
+            return { x: myRoad.xRoadCenter, z: this.position.z, direct: false };
+        } else {
+            // Nearest road is X-aligned (at zRoadCenter)
+            return { x: this.position.x, z: myRoad.zRoadCenter, direct: false };
+        }
+    }
+
     update(dt, playerPos, wantedLevel) {
         if (!this.alive) return;
 
@@ -388,19 +507,25 @@ class PoliceMotorcycle {
             this.blueLight.visible = flash <= 0;
         }
 
-        // Ground following
-        var groundY = this.world.getSpawnHeight(this.position.x, this.position.z);
+        // === ROAD-AWARE HEIGHT FOLLOWING ===
+        // Prefer road surface height when on/near a road for smooth riding
+        var roadHeight = this.world.getRoadSurfaceHeight ? this.world.getRoadSurfaceHeight(this.position.x, this.position.z) : null;
+        var groundY;
+        if (roadHeight !== null) {
+            groundY = roadHeight;
+        } else {
+            groundY = this.world.getSpawnHeight(this.position.x, this.position.z);
+        }
         var groundBlock = this.world.getBlock(Math.floor(this.position.x), groundY - 1, Math.floor(this.position.z));
 
         // Avoid water
         var inWater = (groundBlock === BlockType.WATER || groundY <= WATER_LEVEL + 1);
         if (inWater) {
-            // Steer away from water - turn hard
             this.rotation += this.steerRate * dt * 4;
             this.speed = Math.max(this.speed - this.friction * dt * 2, 3);
         }
 
-        // Vertical physics
+        // Vertical physics - smooth height following
         if (this.position.y > groundY + 0.1) {
             this.verticalVelocity += this.gravity * dt;
             this.position.y += this.verticalVelocity * dt;
@@ -412,63 +537,31 @@ class PoliceMotorcycle {
                 this.onGround = false;
             }
         } else {
-            this.position.y = groundY;
+            // Smoothly interpolate to road height to avoid jerky movement
+            var heightDiff = groundY - this.position.y;
+            if (Math.abs(heightDiff) < 2) {
+                this.position.y += heightDiff * Math.min(1, dt * 8);
+            } else {
+                this.position.y = groundY;
+            }
             this.verticalVelocity = 0;
             this.onGround = true;
         }
 
         // === STUCK DETECTION ===
-        // Every 1.5 seconds, check if we've barely moved - if so, steer around obstacle
         this.stuckTimer += dt;
         if (this.stuckTimer > 1.5) {
             var movedDist = this.position.distanceTo(this.stuckCheckPos);
             if (movedDist < 1.5 && this.speed > 1) {
-                // We're stuck! Turn sharply to get around obstacle
-                this.rotation += (Math.random() > 0.5 ? 1 : -1) * Math.PI * 0.6;
-                this.speed = Math.max(this.speed, 5);
+                // Stuck! Turn sharply and boost speed
+                this.rotation += (Math.random() > 0.5 ? 1 : -1) * Math.PI * 0.7;
+                this.speed = Math.max(this.speed, 8);
             }
             this.stuckCheckPos.copy(this.position);
             this.stuckTimer = 0;
         }
 
-        // === TERRAIN LOOKAHEAD - avoid obstacles ahead ===
-        if (this.speed > 2 && !inWater) {
-            var lookDist = 3 + this.speed * 0.3;
-            var aheadX = this.position.x - Math.sin(this.rotation) * lookDist;
-            var aheadZ = this.position.z - Math.cos(this.rotation) * lookDist;
-            var aheadGroundY = this.world.getSpawnHeight(aheadX, aheadZ);
-            var aheadBlock = this.world.getBlock(Math.floor(aheadX), aheadGroundY - 1, Math.floor(aheadZ));
-            var heightDiff = aheadGroundY - this.position.y;
-
-            // Steer away from steep terrain, water, or big height changes
-            if (aheadBlock === BlockType.WATER || aheadGroundY <= WATER_LEVEL + 1 || heightDiff > 3) {
-                // Try left and right to find a clear path
-                var leftAngle = this.rotation + 0.8;
-                var rightAngle = this.rotation - 0.8;
-                var leftX = this.position.x - Math.sin(leftAngle) * lookDist;
-                var leftZ = this.position.z - Math.cos(leftAngle) * lookDist;
-                var rightX = this.position.x - Math.sin(rightAngle) * lookDist;
-                var rightZ = this.position.z - Math.cos(rightAngle) * lookDist;
-                var leftY = this.world.getSpawnHeight(leftX, leftZ);
-                var rightY = this.world.getSpawnHeight(rightX, rightZ);
-                var leftBlock = this.world.getBlock(Math.floor(leftX), leftY - 1, Math.floor(leftZ));
-                var rightBlock = this.world.getBlock(Math.floor(rightX), rightY - 1, Math.floor(rightZ));
-
-                var leftClear = leftBlock !== BlockType.WATER && leftY > WATER_LEVEL + 1 && Math.abs(leftY - this.position.y) < 3;
-                var rightClear = rightBlock !== BlockType.WATER && rightY > WATER_LEVEL + 1 && Math.abs(rightY - this.position.y) < 3;
-
-                if (leftClear && !rightClear) {
-                    this.rotation += this.steerRate * dt * 3;
-                } else if (rightClear && !leftClear) {
-                    this.rotation -= this.steerRate * dt * 3;
-                } else {
-                    // Both blocked or both clear - pick one
-                    this.rotation += this.steerRate * dt * 3;
-                }
-            }
-        }
-
-        // Chase behavior - always chase when wanted level >= 1 (no distance limit)
+        // Chase behavior - always chase when wanted level >= 1
         this.chasing = wantedLevel >= 1;
 
         if (this.chasing) {
@@ -477,22 +570,28 @@ class PoliceMotorcycle {
                 this.playSiren();
             }
 
-            // Steer toward player
-            var toPlayer = new THREE.Vector3().subVectors(playerPos, this.position);
-            toPlayer.y = 0;
-            if (toPlayer.length() > 0.5) {
-                var targetAngle = Math.atan2(toPlayer.x, toPlayer.z);
+            // === ROAD-AWARE PURSUIT ===
+            // Get the next waypoint to navigate toward the player via roads
+            var waypoint = this.getNextRoadWaypoint(playerPos);
+            var targetX = waypoint.x;
+            var targetZ = waypoint.z;
+
+            // Steer toward the waypoint
+            var toTarget = new THREE.Vector3(targetX - this.position.x, 0, targetZ - this.position.z);
+            var targetDist = toTarget.length();
+
+            if (targetDist > 0.5) {
+                var targetAngle = Math.atan2(toTarget.x, toTarget.z);
                 var angleDiff = targetAngle - this.rotation;
                 // Normalize angle difference to [-PI, PI]
                 while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
                 while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
-                // Faster steering when far away or at high speed to keep on target
-                var steerMult = 1.0;
-                if (distToPlayer > 30) steerMult = 1.8;
-                else if (distToPlayer > 15) steerMult = 1.4;
+                // Steering multiplier - steer faster when angle is large or at intersections
+                var steerMult = 1.5;
+                if (Math.abs(angleDiff) > Math.PI * 0.3) steerMult = 3.0; // Sharp turn needed (intersection)
+                else if (distToPlayer > 30) steerMult = 2.0;
 
-                // Steer toward target
                 var steerAmount = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), this.steerRate * steerMult * dt);
                 this.rotation += steerAmount;
 
@@ -501,13 +600,30 @@ class PoliceMotorcycle {
                 this.leanAngle = Math.max(-0.4, Math.min(0.4, this.leanAngle));
             }
 
-            // Accelerate toward player - faster at higher wanted levels
+            // Speed control - slow down for sharp turns, speed up on straights
             var chaseSpeed = this.maxSpeed * (wantedLevel >= 5 ? 1.3 : wantedLevel >= 4 ? 1.15 : 1.0);
+            var toTargetAngle = Math.atan2(toTarget.x, toTarget.z);
+            var facingDiff = Math.abs(toTargetAngle - this.rotation);
+            while (facingDiff > Math.PI) facingDiff = Math.PI * 2 - facingDiff;
+
             if (distToPlayer > 4) {
-                this.speed += this.acceleration * dt;
-                if (this.speed > chaseSpeed) this.speed = chaseSpeed;
+                // Slow down for sharp turns (like at intersections)
+                if (facingDiff > Math.PI * 0.3) {
+                    // Sharp turn - slow down
+                    var turnSpeed = chaseSpeed * 0.4;
+                    if (this.speed > turnSpeed) {
+                        this.speed -= this.friction * 4 * dt;
+                    } else {
+                        this.speed += this.acceleration * 0.5 * dt;
+                    }
+                    if (this.speed < 3) this.speed = 3;
+                } else {
+                    // Mostly straight - full speed
+                    this.speed += this.acceleration * dt;
+                    if (this.speed > chaseSpeed) this.speed = chaseSpeed;
+                }
             } else {
-                // Slow down when very close to circle around player
+                // Very close to player - slow down to circle
                 this.speed -= this.friction * 3 * dt;
                 if (this.speed < 3) this.speed = 3;
             }
@@ -517,24 +633,31 @@ class PoliceMotorcycle {
                 this.player.takeDamage(this.damage);
                 this.playShot();
                 this.attackCooldown = this.attackInterval;
-                // Create muzzle flash effect
                 this.createMuzzleFlash();
             }
         } else {
-            // Patrol - wander around with some speed instead of just stopping
+            // Patrol - wander along roads
             this.wanderTimer -= dt;
             if (this.wanderTimer <= 0) {
-                this.wanderDir = this.rotation + (Math.random() - 0.5) * Math.PI * 0.5;
+                // Pick a new wander direction along the current road
+                var myRoad = this.getRoadInfo(this.position.x, this.position.z);
+                if (myRoad.onXRoad) {
+                    // On X-road: wander along X axis
+                    this.wanderDir = (Math.random() > 0.5) ? 0 : Math.PI;
+                } else if (myRoad.onZRoad) {
+                    // On Z-road: wander along Z axis
+                    this.wanderDir = (Math.random() > 0.5) ? Math.PI * 0.5 : -Math.PI * 0.5;
+                } else {
+                    this.wanderDir = this.rotation + (Math.random() - 0.5) * Math.PI * 0.5;
+                }
                 this.wanderTimer = 3 + Math.random() * 4;
             }
 
-            // Gently steer toward wander direction
             var wAngleDiff = this.wanderDir - this.rotation;
             while (wAngleDiff > Math.PI) wAngleDiff -= Math.PI * 2;
             while (wAngleDiff < -Math.PI) wAngleDiff += Math.PI * 2;
             this.rotation += Math.sign(wAngleDiff) * Math.min(Math.abs(wAngleDiff), this.steerRate * 0.5 * dt);
 
-            // Cruise at a slow patrol speed
             var patrolSpeed = 4;
             if (this.speed < patrolSpeed) {
                 this.speed += this.acceleration * 0.3 * dt;

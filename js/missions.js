@@ -1,31 +1,53 @@
 // Mission System - Progressive GTA-style missions for Pink Cigarette World
 class MissionSystem {
     constructor() {
-        // Mission definitions
+        // Mission definitions - expanded progressive mission chain
         this.missions = [
+            // === CHAPTER 1: STREET BASICS ===
             {
-                id: 'collect_5_strippers',
-                title: 'Collect 5 Strippers',
-                description: 'Hire 5 strippers using M key ($50 each)',
+                id: 'first_strippers',
+                title: 'Fresh Meat',
+                description: 'Hire 3 strippers using M key near your car ($50 each)',
                 emoji: '💃',
                 type: 'strippers_collected',
+                target: 3,
+                reward: 150,
+                rewardText: '+$150 💰'
+            },
+            {
+                id: 'first_roadkills',
+                title: 'Road Rage',
+                description: 'Get 5 roadkills while driving your Challenger',
+                emoji: '🚗',
+                type: 'roadkills',
                 target: 5,
                 reward: 200,
                 rewardText: '+$200 💰'
             },
             {
-                id: 'roadkill_10',
-                title: 'Run Over 10 NPCs',
-                description: 'Get 10 roadkills while driving',
-                emoji: '🚗',
-                type: 'roadkills',
+                id: 'crackhead_cleanup',
+                title: 'Crackhead Cleanup',
+                description: 'Take out 10 crackheads (shoot or run over)',
+                emoji: '💀',
+                type: 'crackheads_killed',
                 target: 10,
-                reward: 300,
-                rewardText: '+$300 💰'
+                reward: 250,
+                rewardText: '+$250 💰'
             },
             {
-                id: 'kill_5_cops',
-                title: 'Kill 5 Cops',
+                id: 'shop_visit',
+                title: 'Crypto Connoisseur',
+                description: 'Buy 3 drinks from the Crypto Liquor Store',
+                emoji: '🍺',
+                type: 'shop_purchases',
+                target: 3,
+                reward: 100,
+                rewardText: '+$100 💰'
+            },
+            // === CHAPTER 2: BUILDING HEAT ===
+            {
+                id: 'first_cops',
+                title: 'Cop Killer',
                 description: 'Eliminate 5 police officers',
                 emoji: '👮',
                 type: 'cops_killed',
@@ -34,24 +56,167 @@ class MissionSystem {
                 rewardText: '+$500 💰'
             },
             {
-                id: 'collect_20_strippers',
-                title: 'Collect 20 Strippers',
-                description: 'Hire 20 total strippers',
+                id: 'speed_demon',
+                title: 'Speed Demon',
+                description: 'Reach 60 mph in the Challenger',
+                emoji: '🏎️',
+                type: 'top_speed',
+                target: 60,
+                reward: 300,
+                rewardText: '+$300 💰'
+            },
+            {
+                id: 'kill_streak_3',
+                title: 'Triple Threat',
+                description: 'Get a 3x kill streak with the Glock',
+                emoji: '🔥',
+                type: 'best_kill_streak',
+                target: 3,
+                reward: 400,
+                rewardText: '+$400 💰'
+            },
+            {
+                id: 'collect_10_strippers',
+                title: 'Pimp Starter Kit',
+                description: 'Hire 10 total strippers',
                 emoji: '💃',
                 type: 'strippers_collected_total',
-                target: 20,
-                reward: 1000,
-                rewardText: '+$1000 💰'
+                target: 10,
+                reward: 500,
+                rewardText: '+$500 💰'
+            },
+            // === CHAPTER 3: EMPIRE BUILDING ===
+            {
+                id: 'earn_1000',
+                title: 'Stacking Paper',
+                description: 'Accumulate $1000 total earnings',
+                emoji: '💵',
+                type: 'total_money_earned',
+                target: 1000,
+                reward: 300,
+                rewardText: '+$300 💰'
+            },
+            {
+                id: 'roadkill_25',
+                title: 'Highway Menace',
+                description: 'Get 25 total roadkills',
+                emoji: '🚗',
+                type: 'roadkills',
+                target: 25,
+                reward: 500,
+                rewardText: '+$500 💰'
+            },
+            {
+                id: 'destroy_motorcycles',
+                title: 'Bike Wrecker',
+                description: 'Destroy 3 police motorcycles',
+                emoji: '🏍️',
+                type: 'motorcycles_destroyed',
+                target: 3,
+                reward: 600,
+                rewardText: '+$600 💰'
             },
             {
                 id: 'buy_strip_club',
-                title: 'Buy a Strip Club',
+                title: 'Business Owner',
                 description: 'Purchase a strip club from the liquor store ($1500)',
                 emoji: '🏪',
                 type: 'strip_clubs_bought',
                 target: 1,
                 reward: 2000,
-                rewardText: '+$2000 💰 PIMP KING 👑'
+                rewardText: '+$2000 💰'
+            },
+            // === CHAPTER 4: CRIME LORD ===
+            {
+                id: 'kill_streak_6',
+                title: 'Killamanjaro',
+                description: 'Get a 6x kill streak',
+                emoji: '🏔️',
+                type: 'best_kill_streak',
+                target: 6,
+                reward: 800,
+                rewardText: '+$800 💰'
+            },
+            {
+                id: 'deposit_strippers',
+                title: 'Staffing Up',
+                description: 'Deposit 15 strippers into strip clubs',
+                emoji: '💃',
+                type: 'strippers_deposited',
+                target: 15,
+                reward: 1000,
+                rewardText: '+$1000 💰'
+            },
+            {
+                id: 'cops_killed_15',
+                title: 'Most Wanted',
+                description: 'Eliminate 15 total cops',
+                emoji: '🚨',
+                type: 'cops_killed',
+                target: 15,
+                reward: 1000,
+                rewardText: '+$1000 💰'
+            },
+            {
+                id: 'earn_5000',
+                title: 'Big Baller',
+                description: 'Accumulate $5000 total earnings',
+                emoji: '💎',
+                type: 'total_money_earned',
+                target: 5000,
+                reward: 1000,
+                rewardText: '+$1000 💰'
+            },
+            // === CHAPTER 5: KINGPIN ===
+            {
+                id: 'collect_50_strippers',
+                title: 'Pimp Army',
+                description: 'Hire 50 total strippers',
+                emoji: '👑',
+                type: 'strippers_collected_total',
+                target: 50,
+                reward: 2000,
+                rewardText: '+$2000 💰'
+            },
+            {
+                id: 'roadkill_100',
+                title: 'Mass Destruction',
+                description: 'Get 100 total roadkills',
+                emoji: '💥',
+                type: 'roadkills',
+                target: 100,
+                reward: 2000,
+                rewardText: '+$2000 💰'
+            },
+            {
+                id: 'buy_3_clubs',
+                title: 'Strip Club Mogul',
+                description: 'Own 3 strip clubs',
+                emoji: '🏢',
+                type: 'strip_clubs_bought',
+                target: 3,
+                reward: 3000,
+                rewardText: '+$3000 💰'
+            },
+            {
+                id: 'kill_streak_10',
+                title: 'KILLGASM',
+                description: 'Get a 10x kill streak',
+                emoji: '☠️',
+                type: 'best_kill_streak',
+                target: 10,
+                reward: 2000,
+                rewardText: '+$2000 💰'
+            },
+            {
+                id: 'earn_20000',
+                title: 'PIMP KING',
+                description: 'Accumulate $20,000 total earnings',
+                emoji: '👑',
+                type: 'total_money_earned',
+                target: 20000,
+                reward: 5000,
+                rewardText: '+$5000 💰 PIMP KING 👑'
             }
         ];
 
@@ -62,7 +227,14 @@ class MissionSystem {
             strippers_collected_total: 0,
             roadkills: 0,
             cops_killed: 0,
-            strip_clubs_bought: 0
+            strip_clubs_bought: 0,
+            crackheads_killed: 0,
+            shop_purchases: 0,
+            top_speed: 0,
+            best_kill_streak: 0,
+            total_money_earned: 0,
+            motorcycles_destroyed: 0,
+            strippers_deposited: 0
         };
         this.allComplete = false;
 
@@ -201,6 +373,52 @@ class MissionSystem {
 
     onStripClubPurchased() {
         this.progress.strip_clubs_bought++;
+        this.checkMissionProgress();
+        this.saveProgress();
+    }
+
+    onCrackheadKilled() {
+        this.progress.crackheads_killed++;
+        this.checkMissionProgress();
+        this.saveProgress();
+    }
+
+    onShopPurchase() {
+        this.progress.shop_purchases++;
+        this.checkMissionProgress();
+        this.saveProgress();
+    }
+
+    onSpeedReached(mph) {
+        if (mph > this.progress.top_speed) {
+            this.progress.top_speed = mph;
+            this.checkMissionProgress();
+            this.saveProgress();
+        }
+    }
+
+    onKillStreak(streak) {
+        if (streak > this.progress.best_kill_streak) {
+            this.progress.best_kill_streak = streak;
+            this.checkMissionProgress();
+            this.saveProgress();
+        }
+    }
+
+    onMoneyEarned(amount) {
+        this.progress.total_money_earned += amount;
+        this.checkMissionProgress();
+        this.saveProgress();
+    }
+
+    onMotorcycleDestroyed() {
+        this.progress.motorcycles_destroyed++;
+        this.checkMissionProgress();
+        this.saveProgress();
+    }
+
+    onStrippersDeposited(count) {
+        this.progress.strippers_deposited += count;
         this.checkMissionProgress();
         this.saveProgress();
     }
