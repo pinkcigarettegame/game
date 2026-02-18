@@ -21,8 +21,10 @@ class PoliceMotorcycle {
         this.gravity = -25;
         this.stuckTimer = 0;
         this.stuckCheckPos = new THREE.Vector3(x, y, z);
+        this.stuckCount = 0; // How many times stuck in a row
         this.wanderTimer = 0;
         this.wanderDir = 0;
+        this.lastRoadCorrection = 0; // Timer to periodically snap back to road
 
         this.chasing = false;
         this.chaseRange = 150;
@@ -413,81 +415,78 @@ class PoliceMotorcycle {
     getNextRoadWaypoint(playerPos) {
         var myRoad = this.getRoadInfo(this.position.x, this.position.z);
         var playerRoad = this.getRoadInfo(playerPos.x, playerPos.z);
-        var ROAD_SPACING = 128;
+        var ROAD_SPACING = myRoad.roadSpacing;
 
-        // If we're on a road and the player is close (within attack range), go direct
         var distToPlayer = this.position.distanceTo(playerPos);
-        if (distToPlayer < 20) {
+        var dx = playerPos.x - this.position.x;
+        var dz = playerPos.z - this.position.z;
+
+        // If close to player, go direct (leave road if needed)
+        if (distToPlayer < 25) {
             return { x: playerPos.x, z: playerPos.z, direct: true };
         }
 
         // If we're on a road, navigate via the road network
         if (myRoad.onRoad) {
-            // If at an intersection, decide which direction to go
+            // At an intersection: pick the road that reduces the larger offset to the player
             if (myRoad.isIntersection) {
-                // At intersection: pick the road direction that gets us closer to the player
-                var dx = playerPos.x - this.position.x;
-                var dz = playerPos.z - this.position.z;
-
-                // Should we go along X-road (change Z) or Z-road (change X)?
                 if (Math.abs(dx) > Math.abs(dz)) {
-                    // Player is more offset in X - take the Z-aligned road (runs along X... wait, Z-aligned = runs along Z)
-                    // Z-aligned road changes Z position, X-aligned road changes X position
-                    // We want to reduce dx, so go along X-aligned road (which runs along X axis)
+                    // Need to close X gap: travel along X-aligned road (stays at zRoadCenter, moves in X)
                     return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
                 } else {
-                    // Player is more offset in Z - take the Z-aligned road
+                    // Need to close Z gap: travel along Z-aligned road (stays at xRoadCenter, moves in Z)
                     return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
                 }
             }
 
-            // On a Z-road (runs along Z axis): we can move in Z direction
-            // Navigate toward the nearest intersection that gets us closer to the player
+            // On Z-aligned road only (position.x ≈ xRoadCenter, can move freely in Z)
             if (myRoad.onXRoad && !myRoad.onZRoad) {
-                // On X-road (runs along X): navigate along X toward player, or toward nearest Z-road intersection
-                var playerDZ = playerPos.z - this.position.z;
-                if (Math.abs(playerDZ) < 10) {
-                    // Player is roughly on our road's Z level - just go along X toward them
-                    return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
-                } else {
-                    // Need to get to a Z-road to change our Z position
-                    // Find the nearest Z-road intersection along our current X-road
-                    var nearestZRoadX = Math.round(this.position.x / ROAD_SPACING) * ROAD_SPACING;
-                    // Pick the one in the direction of the player
-                    if ((playerPos.x - this.position.x) > 0 && nearestZRoadX < this.position.x) {
-                        nearestZRoadX += ROAD_SPACING;
-                    } else if ((playerPos.x - this.position.x) < 0 && nearestZRoadX > this.position.x) {
-                        nearestZRoadX -= ROAD_SPACING;
-                    }
-                    return { x: nearestZRoadX, z: myRoad.zRoadCenter, direct: false };
+                // Check if player is roughly on the same Z-aligned road
+                if (Math.abs(dz) < ROAD_SPACING * 0.15) {
+                    // Player is near our Z level - head along Z toward them
+                    return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
                 }
+                // Need to turn onto an X-aligned road to change Z
+                // Find nearest X-aligned road intersection (where Z-roads cross)
+                var nearestCrossZ = Math.round(this.position.z / ROAD_SPACING) * ROAD_SPACING;
+                // Pick the intersection in the direction of the player
+                var dzToNearest = nearestCrossZ - this.position.z;
+                if (Math.abs(dzToNearest) < 3) {
+                    // Already at intersection but not detected - pick next one toward player
+                    nearestCrossZ += (dz > 0 ? ROAD_SPACING : -ROAD_SPACING);
+                } else if (dz > 0 && nearestCrossZ < this.position.z) {
+                    nearestCrossZ += ROAD_SPACING;
+                } else if (dz < 0 && nearestCrossZ > this.position.z) {
+                    nearestCrossZ -= ROAD_SPACING;
+                }
+                return { x: myRoad.xRoadCenter, z: nearestCrossZ, direct: false };
             }
 
+            // On X-aligned road only (position.z ≈ zRoadCenter, can move freely in X)
             if (myRoad.onZRoad && !myRoad.onXRoad) {
-                // On Z-road (runs along Z): navigate along Z toward player, or toward nearest X-road intersection
-                var playerDX = playerPos.x - this.position.x;
-                if (Math.abs(playerDX) < 10) {
-                    // Player is roughly on our road's X level - just go along Z toward them
-                    return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
-                } else {
-                    // Need to get to an X-road to change our X position
-                    var nearestXRoadZ = Math.round(this.position.z / ROAD_SPACING) * ROAD_SPACING;
-                    if ((playerPos.z - this.position.z) > 0 && nearestXRoadZ < this.position.z) {
-                        nearestXRoadZ += ROAD_SPACING;
-                    } else if ((playerPos.z - this.position.z) < 0 && nearestXRoadZ > this.position.z) {
-                        nearestXRoadZ -= ROAD_SPACING;
-                    }
-                    return { x: myRoad.xRoadCenter, z: nearestXRoadZ, direct: false };
+                // Check if player is roughly on the same X-aligned road
+                if (Math.abs(dx) < ROAD_SPACING * 0.15) {
+                    // Player is near our X level - head along X toward them
+                    return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
                 }
+                // Need to turn onto a Z-aligned road to change X
+                var nearestCrossX = Math.round(this.position.x / ROAD_SPACING) * ROAD_SPACING;
+                var dxToNearest = nearestCrossX - this.position.x;
+                if (Math.abs(dxToNearest) < 3) {
+                    nearestCrossX += (dx > 0 ? ROAD_SPACING : -ROAD_SPACING);
+                } else if (dx > 0 && nearestCrossX < this.position.x) {
+                    nearestCrossX += ROAD_SPACING;
+                } else if (dx < 0 && nearestCrossX > this.position.x) {
+                    nearestCrossX -= ROAD_SPACING;
+                }
+                return { x: nearestCrossX, z: myRoad.zRoadCenter, direct: false };
             }
         }
 
         // Not on a road - navigate to the nearest road first
         if (myRoad.distFromXRoad < myRoad.distFromZRoad) {
-            // Nearest road is Z-aligned (at xRoadCenter)
             return { x: myRoad.xRoadCenter, z: this.position.z, direct: false };
         } else {
-            // Nearest road is X-aligned (at zRoadCenter)
             return { x: this.position.x, z: myRoad.zRoadCenter, direct: false };
         }
     }
@@ -548,17 +547,47 @@ class PoliceMotorcycle {
             this.onGround = true;
         }
 
-        // === STUCK DETECTION ===
+        // === STUCK DETECTION (faster, more aggressive recovery) ===
         this.stuckTimer += dt;
-        if (this.stuckTimer > 1.5) {
+        if (this.stuckTimer > 0.8) {
             var movedDist = this.position.distanceTo(this.stuckCheckPos);
-            if (movedDist < 1.5 && this.speed > 1) {
-                // Stuck! Turn sharply and boost speed
-                this.rotation += (Math.random() > 0.5 ? 1 : -1) * Math.PI * 0.7;
-                this.speed = Math.max(this.speed, 8);
+            if (movedDist < 0.8 && this.speed > 1) {
+                this.stuckCount++;
+                if (this.stuckCount >= 3) {
+                    // Very stuck - teleport to nearest road toward player
+                    var myRoad = this.getRoadInfo(this.position.x, this.position.z);
+                    if (myRoad.distFromXRoad < myRoad.distFromZRoad) {
+                        this.position.x = myRoad.xRoadCenter;
+                    } else {
+                        this.position.z = myRoad.zRoadCenter;
+                    }
+                    this.stuckCount = 0;
+                    this.speed = 10;
+                } else {
+                    // Turn sharply and boost speed
+                    this.rotation += (Math.random() > 0.5 ? 1 : -1) * Math.PI * 0.8;
+                    this.speed = Math.max(this.speed, 10);
+                }
+            } else {
+                this.stuckCount = Math.max(0, this.stuckCount - 1);
             }
             this.stuckCheckPos.copy(this.position);
             this.stuckTimer = 0;
+        }
+
+        // === PERIODIC ROAD CORRECTION (keep motorcycle on road) ===
+        this.lastRoadCorrection += dt;
+        if (this.lastRoadCorrection > 2.0 && this.chasing) {
+            this.lastRoadCorrection = 0;
+            var roadInfo = this.getRoadInfo(this.position.x, this.position.z);
+            if (!roadInfo.onRoad) {
+                // Off-road! Gently nudge back toward nearest road
+                if (roadInfo.distFromXRoad < roadInfo.distFromZRoad) {
+                    this.position.x += (roadInfo.xRoadCenter - this.position.x) * 0.3;
+                } else {
+                    this.position.z += (roadInfo.zRoadCenter - this.position.z) * 0.3;
+                }
+            }
         }
 
         // Chase behavior - always chase when wanted level >= 1

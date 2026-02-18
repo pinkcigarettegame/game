@@ -387,11 +387,33 @@ class Stripper {
                 if (idx >= 0) this.copSpawner.cops.splice(idx, 1);
                 if (this.glockRef) {
                     this.glockRef.money += 10;
-                    // Only 1 dollar bill per cop kill from strippers (performance)
                     if (!window.particleCaps || window.particleCaps.dollarBills.active < window.particleCaps.dollarBills.max) {
                         this.glockRef.spawnDollarBill();
                     }
                 }
+            } else if (targetType === 'motorcycle' && this.copSpawner) {
+                const idx = this.copSpawner.motorcycles.indexOf(target);
+                if (idx >= 0) this.copSpawner.motorcycles.splice(idx, 1);
+                if (this.glockRef) {
+                    this.glockRef.money += 15;
+                    if (!window.particleCaps || window.particleCaps.dollarBills.active < window.particleCaps.dollarBills.max) {
+                        this.glockRef.spawnDollarBill();
+                    }
+                }
+                if (this.copSpawner) this.copSpawner.addWanted(2);
+            } else if (targetType === 'helicopter' && this.copSpawner) {
+                // Helicopter destroyed by stripper!
+                const heliMoney = 50 + Math.floor(Math.random() * 51);
+                if (this.glockRef) {
+                    this.glockRef.money += heliMoney;
+                    for (let d = 0; d < 5; d++) {
+                        setTimeout(() => {
+                            if (this.glockRef && this.glockRef.spawnDollarBill) this.glockRef.spawnDollarBill();
+                        }, d * 80);
+                    }
+                }
+                this.copSpawner.helicopter = null;
+                this.copSpawner.addWanted(2);
             }
         } else {
             // Make target flee from the stripper
@@ -496,6 +518,28 @@ class Stripper {
                     bestDist = dist;
                     bestTarget = cop;
                     bestTargetType = 'cop';
+                }
+            }
+            // Also target police motorcycles
+            if (this.copSpawner.motorcycles) {
+                for (const moto of this.copSpawner.motorcycles) {
+                    if (!moto.alive) continue;
+                    const dist = moto.position.distanceTo(this.position);
+                    if (dist < effectiveRange && dist < bestDist) {
+                        bestDist = dist;
+                        bestTarget = moto;
+                        bestTargetType = 'motorcycle';
+                    }
+                }
+            }
+            // Also target police helicopter
+            if (this.copSpawner.helicopter && this.copSpawner.helicopter.alive) {
+                const heli = this.copSpawner.helicopter;
+                const dist = heli.position.distanceTo(this.position);
+                if (dist < effectiveRange * 1.5 && dist < bestDist) {
+                    bestDist = dist;
+                    bestTarget = heli;
+                    bestTargetType = 'helicopter';
                 }
             }
         }

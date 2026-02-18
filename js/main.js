@@ -410,6 +410,57 @@
             }
         }
 
+        // Draw Mt. Takedown marker on minimap
+        const MTN_X = 256, MTN_Z = 256;
+        const mtnDx = MTN_X - px;
+        const mtnDz = MTN_Z - pz;
+        const mtnCos = Math.cos(playerYaw);
+        const mtnSin = Math.sin(playerYaw);
+        const mtnSx = (mtnDx * mtnCos - mtnDz * mtnSin) * MINIMAP_SCALE + cx;
+        const mtnSy = (mtnDx * mtnSin + mtnDz * mtnCos) * MINIMAP_SCALE + cy;
+        const mtnDistFromCenter = Math.sqrt((mtnSx - cx) * (mtnSx - cx) + (mtnSy - cy) * (mtnSy - cy));
+        
+        if (mtnDistFromCenter < r - 6) {
+            // Mountain is visible on minimap - draw triangle icon
+            ctx.fillStyle = '#ff6600';
+            ctx.shadowColor = '#ff6600';
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.moveTo(mtnSx, mtnSy - 7);
+            ctx.lineTo(mtnSx - 5, mtnSy + 3);
+            ctx.lineTo(mtnSx + 5, mtnSy + 3);
+            ctx.closePath();
+            ctx.fill();
+            // Snow cap
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(mtnSx, mtnSy - 7);
+            ctx.lineTo(mtnSx - 2, mtnSy - 3);
+            ctx.lineTo(mtnSx + 2, mtnSy - 3);
+            ctx.closePath();
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            // Label
+            ctx.fillStyle = '#ff8833';
+            ctx.font = 'bold 7px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('MT.TAKEDOWN', mtnSx, mtnSy + 12);
+        } else {
+            // Draw at edge as direction indicator
+            const mtnAngle = Math.atan2(mtnSy - cy, mtnSx - cx);
+            const mtnEdgeX = cx + Math.cos(mtnAngle) * (r - 10);
+            const mtnEdgeY = cy + Math.sin(mtnAngle) * (r - 10);
+            ctx.fillStyle = '#ff6600';
+            ctx.globalAlpha = 0.7;
+            ctx.beginPath();
+            ctx.moveTo(mtnEdgeX, mtnEdgeY - 4);
+            ctx.lineTo(mtnEdgeX - 3, mtnEdgeY + 2);
+            ctx.lineTo(mtnEdgeX + 3, mtnEdgeY + 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+
         // Draw local player (center, white triangle pointing up = forward)
         ctx.fillStyle = '#ffffff';
         ctx.shadowColor = '#ffffff';
@@ -557,13 +608,27 @@
                         enteredOwnCar = true;
                     }
                 }
-                // If not near own car, check for remote players' parked cars to steal
+                // If not near own car, check for helicopter to steal
+                if (!enteredOwnCar && copSpawner && copSpawner.helicopter) {
+                    const heli = copSpawner.helicopter;
+                    if (heli.alive && (heli.stealable || heli.crashed)) {
+                        const heliDist = player.position.distanceTo(heli.position);
+                        if (heliDist < 8) {
+                            stealHelicopter(heli);
+                            enteredOwnCar = true; // Prevent further checks
+                        }
+                    }
+                }
+                // If not near own car or helicopter, check for remote players' parked cars to steal
                 if (!enteredOwnCar && remoteRenderer && mp) {
                     tryStealRemoteCar();
                 }
             }
         }
         hKeyWasDown = hKeyDown;
+
+        // === HELICOPTER PROXIMITY PROMPT ===
+        updateHeliPrompt();
 
         // === CAR PROXIMITY PROMPT ===
         updateCarPrompt();
@@ -642,6 +707,9 @@
             
             // === CHECK CAR-NPC COLLISIONS (roadkill!) ===
             checkCarNPCCollisions(dt);
+
+            // === MT. TAKEDOWN: Check if player reached the summit with helicopter chasing ===
+            checkMountainTakedown();
             
             // Consume mouse input so it doesn't accumulate
             input.mouseDX = 0;
@@ -1758,14 +1826,15 @@
         // --- Check Police Helicopter (if flying low enough) ---
         if (copSpawner && copSpawner.helicopter) {
             const heli = copSpawner.helicopter;
-            if (heli.alive) {
-                // Check if helicopter is low enough to be hit by car (within ~8 blocks above ground)
+            if (heli.alive && !heli.stolen) {
+                // Check if helicopter is low enough to be hit by car (wider range when damaged)
                 const heliHeightAboveCar = heli.position.y - challenger.position.y;
-                if (heliHeightAboveCar < 8 && heliHeightAboveCar > -2) {
+                const heliHitHeight = heli.health <= 20 ? 12 : 10; // Easier to hit when damaged
+                if (heliHeightAboveCar < heliHitHeight && heliHeightAboveCar > -2) {
                     const dx = heli.position.x - challenger.position.x;
                     const dz = heli.position.z - challenger.position.z;
                     const horizDist = Math.sqrt(dx * dx + dz * dz);
-                    if (horizDist < 4) { // Helicopter is wide
+                    if (horizDist < 6) { // Wider hitbox (was 4)
                         if (carSpeed >= MIN_KILL_SPEED) {
                             heli.health -= Math.ceil(carSpeed * 5);
                             spawnCarBloodEffect(heli.position);
@@ -2651,6 +2720,747 @@
             screechHP.connect(screechGain);
             screechGain.connect(ctx.destination);
             screech.start(t + 0.4);
+        } catch(e) {}
+    }
+
+    // === HELICOPTER STEALING SYSTEM ===
+    let flyingHelicopter = null; // Reference to stolen helicopter being flown
+
+    function stealHelicopter(heli) {
+        if (!heli || !heli.alive || flyingHelicopter) return;
+
+        // Mark helicopter as stolen
+        heli.stolen = true;
+        heli.crashed = false;
+        heli.chasing = false;
+        flyingHelicopter = heli;
+
+        // Remove from cop spawner so it stops being managed as police
+        if (copSpawner) {
+            copSpawner.helicopter = null;
+            copSpawner.addWanted(3); // Big wanted increase for stealing a helicopter!
+        }
+
+        // Teleport player into helicopter
+        player.position.copy(heli.position);
+        player.velocity.set(0, 0, 0);
+
+        // Hide player mesh, show helicopter controls
+        if (player.highlightMesh) player.highlightMesh.visible = false;
+        if (glock && glock.equipped) glock.toggle();
+
+        // Show steal message
+        const inviteMsg = document.getElementById('invite-message');
+        if (inviteMsg) {
+            const msgs = [
+                '🚁💨 HELICOPTER JACKED! Use WASD + Space/Shift to fly! 🔥',
+                '🚁😈 YOU STOLE THE CHOPPER! WASD + Space/Shift! ⭐⭐⭐',
+                '🚁🔥 GRAND THEFT HELICOPTER! Fly with WASD + Space/Shift! 💀'
+            ];
+            inviteMsg.textContent = msgs[Math.floor(Math.random() * msgs.length)];
+            inviteMsg.classList.remove('active');
+            inviteMsg.style.display = 'none';
+            void inviteMsg.offsetWidth;
+            inviteMsg.style.display = 'block';
+            inviteMsg.classList.add('active');
+            setTimeout(() => { inviteMsg.classList.remove('active'); inviteMsg.style.display = 'none'; }, 4000);
+        }
+
+        // Increase fog distance for flying
+        scene.fog.near = 80;
+        scene.fog.far = 160;
+
+        // Hide normal HUD
+        const hud = document.getElementById('hud');
+        if (hud) hud.style.display = 'none';
+    }
+
+    function updateHeliPrompt() {
+        // Show prompt when near a stealable helicopter
+        let heliPrompt = document.getElementById('heli-prompt');
+        if (!heliPrompt) {
+            // Create the prompt element if it doesn't exist
+            heliPrompt = document.createElement('div');
+            heliPrompt.id = 'heli-prompt';
+            heliPrompt.style.cssText = 'position:fixed; bottom:180px; left:50%; transform:translateX(-50%); ' +
+                'background:rgba(0,0,0,0.7); color:#44ffff; padding:10px 20px; border-radius:8px; ' +
+                'font-family:Courier New,monospace; font-size:16px; font-weight:bold; display:none; z-index:200; ' +
+                'text-shadow:0 0 8px #44ffff; border:1px solid rgba(68,255,255,0.3);';
+            document.body.appendChild(heliPrompt);
+        }
+
+        if (!copSpawner || !copSpawner.helicopter || drivingMode || flyingHelicopter) {
+            heliPrompt.style.display = 'none';
+            return;
+        }
+
+        const heli = copSpawner.helicopter;
+        if (!heli.alive || (!heli.stealable && !heli.crashed)) {
+            heliPrompt.style.display = 'none';
+            return;
+        }
+
+        const dist = player.position.distanceTo(heli.position);
+        if (dist < 10) {
+            heliPrompt.textContent = '🚁 Press H to STEAL HELICOPTER! 🚁';
+            heliPrompt.style.display = 'block';
+        } else {
+            heliPrompt.style.display = 'none';
+        }
+    }
+
+    // === MT. TAKEDOWN: Helicopter takedown cutscene ===
+    let mtnTakedownActive = false;
+    let mtnTakedownCooldown = 0;
+    const MTN_PEAK_X = 256;
+    const MTN_PEAK_Z = 256;
+    const MTN_PEAK_Y = 58;
+
+    function checkMountainTakedown() {
+        if (!challenger || !drivingMode || mtnTakedownActive) return;
+        mtnTakedownCooldown = Math.max(0, mtnTakedownCooldown - 0.016);
+        if (mtnTakedownCooldown > 0) return;
+
+        // Check if helicopter is active
+        if (!copSpawner || !copSpawner.helicopter || !copSpawner.helicopter.alive) return;
+        const heli = copSpawner.helicopter;
+        if (heli.stolen || heli.crashed) return;
+
+        // Check if car is near the mountain peak
+        const dx = challenger.position.x - MTN_PEAK_X;
+        const dz = challenger.position.z - MTN_PEAK_Z;
+        const horizDist = Math.sqrt(dx * dx + dz * dz);
+        const carY = challenger.position.y;
+
+        // Must be near peak (within 8 blocks horizontally) and high enough (above Y=55)
+        if (horizDist < 8 && carY > MTN_PEAK_Y - 3) {
+            // Must be going fast enough (launched off the ramp)
+            const carSpeed = Math.abs(challenger.speed);
+            if (carSpeed > 8) {
+                startMountainTakedown(heli);
+            }
+        }
+    }
+
+    function startMountainTakedown(heli) {
+        mtnTakedownActive = true;
+        mtnTakedownCooldown = 30;
+
+        const origCarPos = challenger.position.clone();
+        const origCarSpeed = challenger.speed;
+        const heliPos = heli.position.clone();
+
+        // Calculate launch trajectory toward helicopter
+        const launchDir = new THREE.Vector3(
+            heliPos.x - origCarPos.x,
+            heliPos.y - origCarPos.y + 8,
+            heliPos.z - origCarPos.z
+        ).normalize();
+
+        // Show cinematic bars
+        showCinematicBars();
+
+        // Create dramatic screen flash
+        const flash = document.createElement('div');
+        flash.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:white;z-index:600;opacity:0;pointer-events:none;transition:opacity 0.1s;';
+        document.body.appendChild(flash);
+
+        // Create slow-mo vignette overlay
+        const vignette = document.createElement('div');
+        vignette.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:450;pointer-events:none;opacity:0;transition:opacity 0.3s;' +
+            'background:radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 80%, rgba(0,0,0,0.9) 100%);';
+        document.body.appendChild(vignette);
+        setTimeout(() => { vignette.style.opacity = '1'; }, 50);
+
+        // Show epic title text with glow
+        const titleDiv = document.createElement('div');
+        titleDiv.style.cssText = 'position:fixed;top:35%;left:50%;transform:translate(-50%,-50%) scale(0.5);z-index:550;pointer-events:none;' +
+            'font-family:"Impact",sans-serif;font-size:64px;color:#ff4400;text-shadow:0 0 30px #ff4400,0 0 60px #ff2200,0 0 90px #ff0000,2px 2px 0 #000;' +
+            'letter-spacing:6px;opacity:0;transition:all 0.4s cubic-bezier(0.2,1,0.3,1);text-align:center;white-space:nowrap;';
+        titleDiv.textContent = '⛰️ MT. TAKEDOWN ⛰️';
+        document.body.appendChild(titleDiv);
+        setTimeout(() => { titleDiv.style.opacity = '1'; titleDiv.style.transform = 'translate(-50%,-50%) scale(1)'; }, 100);
+
+        // Play epic sound
+        playTakedownSound();
+
+        let phase = 0;
+        let timer = 0;
+        let carVelY = 18;
+        const gravity = -8; // Slower gravity for more hang time
+        let camAngle = 0;
+        let slowMo = 0.4; // Start in slow motion
+        let impactPos = null;
+        let reward = 0;
+        let fireParticles = [];
+        let debrisParticles = [];
+
+        // Spawn trailing fire/smoke from car during launch
+        function spawnTrailParticle() {
+            const colors = [0xff4400, 0xff6600, 0xff8800, 0xffaa00, 0xff2200];
+            const size = 0.3 + Math.random() * 0.8;
+            const geo = new THREE.SphereGeometry(size, 4, 4);
+            const mat = new THREE.MeshBasicMaterial({
+                color: colors[Math.floor(Math.random() * colors.length)],
+                transparent: true, opacity: 0.9
+            });
+            const p = new THREE.Mesh(geo, mat);
+            p.position.copy(challenger.position);
+            p.position.x += (Math.random() - 0.5) * 2;
+            p.position.y += (Math.random() - 0.5) * 1;
+            p.position.z += (Math.random() - 0.5) * 2;
+            scene.add(p);
+            fireParticles.push({ mesh: p, geo, mat, life: 0, maxLife: 30 + Math.random() * 20,
+                vx: (Math.random() - 0.5) * 3, vy: -1 + Math.random() * 2, vz: (Math.random() - 0.5) * 3 });
+        }
+
+        // Spawn explosion debris
+        function spawnExplosionDebris(pos, count) {
+            for (let i = 0; i < count; i++) {
+                const size = 0.2 + Math.random() * 0.6;
+                const geo = new THREE.BoxGeometry(size, size * 0.5, size);
+                const isFlame = Math.random() > 0.4;
+                const mat = new THREE.MeshBasicMaterial({
+                    color: isFlame ? new THREE.Color(1, 0.2 + Math.random() * 0.5, 0) : new THREE.Color(0.2, 0.2, 0.2),
+                    transparent: true, opacity: 1
+                });
+                const d = new THREE.Mesh(geo, mat);
+                d.position.copy(pos);
+                const speed = 5 + Math.random() * 20;
+                const angle = Math.random() * Math.PI * 2;
+                const pitch = (Math.random() - 0.3) * Math.PI;
+                scene.add(d);
+                debrisParticles.push({ mesh: d, geo, mat, life: 0, maxLife: 60 + Math.random() * 40,
+                    vx: Math.cos(angle) * Math.cos(pitch) * speed,
+                    vy: Math.sin(pitch) * speed + 5,
+                    vz: Math.sin(angle) * Math.cos(pitch) * speed,
+                    spinX: (Math.random() - 0.5) * 15, spinY: (Math.random() - 0.5) * 15,
+                    spinZ: (Math.random() - 0.5) * 15, isFlame });
+            }
+        }
+
+        // Spawn expanding shockwave ring
+        function spawnShockwave(pos) {
+            const ringGeo = new THREE.RingGeometry(0.5, 1.5, 32);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.position.copy(pos);
+            ring.rotation.x = -Math.PI / 2;
+            scene.add(ring);
+            let f = 0;
+            const animRing = () => {
+                f++;
+                const s = 1 + f * 1.5;
+                ring.scale.set(s, s, s);
+                ringMat.opacity = Math.max(0, 0.8 - f / 30);
+                if (f < 30) { requestAnimationFrame(animRing); }
+                else { scene.remove(ring); ringGeo.dispose(); ringMat.dispose(); }
+            };
+            requestAnimationFrame(animRing);
+        }
+
+        const animateTakedown = () => {
+            const dt = 0.016 * slowMo;
+            timer += dt;
+
+            // Update fire trail particles
+            for (let i = fireParticles.length - 1; i >= 0; i--) {
+                const fp = fireParticles[i];
+                fp.life++;
+                fp.mesh.position.x += fp.vx * 0.016;
+                fp.mesh.position.y += fp.vy * 0.016;
+                fp.mesh.position.z += fp.vz * 0.016;
+                const s = Math.max(0.1, 1 - fp.life / fp.maxLife);
+                fp.mesh.scale.set(s, s, s);
+                fp.mat.opacity = Math.max(0, 0.9 - fp.life / fp.maxLife);
+                if (fp.life >= fp.maxLife) {
+                    scene.remove(fp.mesh); fp.geo.dispose(); fp.mat.dispose();
+                    fireParticles.splice(i, 1);
+                }
+            }
+
+            // Update debris particles
+            for (let i = debrisParticles.length - 1; i >= 0; i--) {
+                const dp = debrisParticles[i];
+                dp.life++;
+                dp.vy -= 15 * 0.016;
+                dp.mesh.position.x += dp.vx * 0.016;
+                dp.mesh.position.y += dp.vy * 0.016;
+                dp.mesh.position.z += dp.vz * 0.016;
+                dp.mesh.rotation.x += dp.spinX * 0.016;
+                dp.mesh.rotation.y += dp.spinY * 0.016;
+                dp.mesh.rotation.z += dp.spinZ * 0.016;
+                dp.vx *= 0.99; dp.vz *= 0.99;
+                dp.mat.opacity = Math.max(0, 1 - dp.life / dp.maxLife);
+                if (dp.isFlame) {
+                    const r = Math.max(0, 1 - dp.life / dp.maxLife * 0.5);
+                    const g = Math.max(0, 0.4 - dp.life / dp.maxLife * 0.4);
+                    dp.mat.color.setRGB(r, g, 0);
+                }
+                if (dp.life >= dp.maxLife) {
+                    scene.remove(dp.mesh); dp.geo.dispose(); dp.mat.dispose();
+                    debrisParticles.splice(i, 1);
+                }
+            }
+
+            if (phase === 0) {
+                // === PHASE 0: SLOW-MO LAUNCH (0-1.5s real time) ===
+                // Gradually speed up from slow-mo
+                slowMo = Math.min(1, 0.4 + timer * 0.4);
+
+                challenger.position.x += launchDir.x * 30 * dt;
+                challenger.position.y += carVelY * dt;
+                challenger.position.z += launchDir.z * 30 * dt;
+                carVelY += gravity * dt;
+
+                // Dramatic barrel roll
+                challenger.rotation += 0.12 * slowMo;
+                challenger.mesh.position.copy(challenger.position);
+                challenger.mesh.rotation.y = challenger.rotation;
+                // Tilt the car for barrel roll effect
+                challenger.mesh.rotation.z = Math.sin(timer * 4) * 0.3;
+                challenger.mesh.rotation.x = Math.sin(timer * 3) * 0.15;
+
+                // Spawn fire trail
+                if (Math.random() < 0.6) spawnTrailParticle();
+
+                // === CINEMATIC CAMERA: Orbiting dramatic angle ===
+                camAngle += 1.8 * dt;
+                const camDist = 12 + Math.sin(timer * 2) * 4; // Breathing distance
+                const camHeight = 2 + Math.sin(timer * 1.5) * 3;
+                const camX = challenger.position.x + Math.sin(camAngle) * camDist;
+                const camY = challenger.position.y + camHeight;
+                const camZ = challenger.position.z + Math.cos(camAngle) * camDist;
+                camera.position.set(camX, camY, camZ);
+
+                // Look slightly ahead of the car (anticipation)
+                const lookAhead = challenger.position.clone().add(launchDir.clone().multiplyScalar(5));
+                camera.lookAt(lookAhead);
+
+                // Dramatic FOV zoom
+                camera.fov = 60 + Math.sin(timer * 3) * 10;
+                camera.updateProjectionMatrix();
+
+                // === CINEMATIC CAMERA SWITCH: When close, switch to side-view showing both car and heli ===
+                const distToHeli = challenger.position.distanceTo(heli.position);
+                if (distToHeli < 25 && distToHeli > 10) {
+                    // Approaching - camera positioned to see BOTH car and helicopter
+                    const midPoint = challenger.position.clone().lerp(heli.position, 0.5);
+                    const perpX = -(heli.position.z - challenger.position.z);
+                    const perpZ = (heli.position.x - challenger.position.x);
+                    const perpLen = Math.sqrt(perpX * perpX + perpZ * perpZ) || 1;
+                    camera.position.set(
+                        midPoint.x + (perpX / perpLen) * 18,
+                        midPoint.y + 3,
+                        midPoint.z + (perpZ / perpLen) * 18
+                    );
+                    camera.lookAt(midPoint);
+                    camera.fov = 55; // Tighter framing
+                    camera.updateProjectionMatrix();
+                }
+
+                if (distToHeli < 10 || timer > 2.5) {
+                    phase = 1;
+                    timer = 0;
+                    slowMo = 0.12; // EXTREME slow-mo for impact
+                    impactPos = heli.position.clone(); // Impact AT the helicopter
+
+                    // === IMPACT! Mark helicopter dead but DON'T dispose yet ===
+                    heli.health = 0;
+                    heli.alive = false;
+
+                    // Snap car to helicopter position for visible collision
+                    challenger.position.lerp(heli.position, 0.7);
+                    challenger.mesh.position.copy(challenger.position);
+
+                    // Camera: dramatic close-up showing car embedded in helicopter
+                    const sideDir = new THREE.Vector3(
+                        -(heli.position.z - origCarPos.z),
+                        0,
+                        (heli.position.x - origCarPos.x)
+                    ).normalize();
+                    camera.position.set(
+                        impactPos.x + sideDir.x * 12,
+                        impactPos.y + 2,
+                        impactPos.z + sideDir.z * 12
+                    );
+                    camera.lookAt(impactPos);
+                    camera.fov = 45; // Tight dramatic zoom
+                    camera.updateProjectionMatrix();
+
+                    // White flash
+                    flash.style.opacity = '1';
+                    setTimeout(() => { flash.style.opacity = '0'; }, 200);
+
+                    // Screen shake
+                    let shakeF = 0;
+                    const shakeOrigin = camera.position.clone();
+                    const doImpactShake = () => {
+                        shakeF++;
+                        const intensity = Math.max(0, 1 - shakeF / 30) * 2.5;
+                        camera.position.x = shakeOrigin.x + (Math.random() - 0.5) * intensity;
+                        camera.position.y = shakeOrigin.y + (Math.random() - 0.5) * intensity;
+                        camera.position.z = shakeOrigin.z + (Math.random() - 0.5) * intensity;
+                        camera.lookAt(impactPos);
+                        if (shakeF < 30) requestAnimationFrame(doImpactShake);
+                    };
+                    requestAnimationFrame(doImpactShake);
+
+                    // Massive explosion AT the helicopter
+                    spawnExplosionDebris(impactPos, 50);
+                    spawnShockwave(impactPos);
+
+                    // Staggered explosion bursts around the helicopter
+                    spawnCarBloodEffect(impactPos);
+                    setTimeout(() => { spawnExplosionDebris(impactPos.clone().add(new THREE.Vector3(3, 2, 0)), 15); }, 150);
+                    setTimeout(() => { spawnCarBloodEffect(impactPos.clone().add(new THREE.Vector3(-2, 1, 3))); }, 250);
+                    setTimeout(() => { spawnExplosionDebris(impactPos.clone().add(new THREE.Vector3(0, 4, 0)), 20); }, 350);
+                    setTimeout(() => { spawnCarBloodEffect(impactPos.clone().add(new THREE.Vector3(2, -1, -2))); }, 450);
+
+                    // Break helicopter apart - scatter its mesh children as debris
+                    if (heli.mesh) {
+                        const heliParts = [];
+                        heli.mesh.traverse(child => {
+                            if (child.isMesh && child !== heli.mesh) {
+                                heliParts.push(child);
+                            }
+                        });
+                        // Detach parts and fling them
+                        for (const part of heliParts) {
+                            const worldPos = new THREE.Vector3();
+                            part.getWorldPosition(worldPos);
+                            heli.mesh.remove(part);
+                            scene.add(part);
+                            part.position.copy(worldPos);
+                            const flingSpeed = 8 + Math.random() * 15;
+                            const flingAngle = Math.random() * Math.PI * 2;
+                            let pvx = Math.cos(flingAngle) * flingSpeed;
+                            let pvy = 3 + Math.random() * 10;
+                            let pvz = Math.sin(flingAngle) * flingSpeed;
+                            const pSpinX = (Math.random() - 0.5) * 12;
+                            const pSpinZ = (Math.random() - 0.5) * 12;
+                            let pf = 0;
+                            const animPart = () => {
+                                pf++;
+                                pvy -= 15 * 0.016;
+                                part.position.x += pvx * 0.016;
+                                part.position.y += pvy * 0.016;
+                                part.position.z += pvz * 0.016;
+                                part.rotation.x += pSpinX * 0.016;
+                                part.rotation.z += pSpinZ * 0.016;
+                                pvx *= 0.99; pvz *= 0.99;
+                                if (part.material) {
+                                    part.material.transparent = true;
+                                    part.material.opacity = Math.max(0, 1 - pf / 80);
+                                }
+                                if (pf < 80) requestAnimationFrame(animPart);
+                                else {
+                                    scene.remove(part);
+                                    if (part.geometry) part.geometry.dispose();
+                                    if (part.material) part.material.dispose();
+                                }
+                            };
+                            // Delay each part slightly for cascading breakup
+                            setTimeout(() => requestAnimationFrame(animPart), Math.random() * 300);
+                        }
+                        // Hide the main helicopter mesh after parts scatter
+                        setTimeout(() => {
+                            if (heli.mesh) { scene.remove(heli.mesh); }
+                        }, 400);
+                    }
+
+                    // Fireball light flash (brighter, longer)
+                    const fireLight = new THREE.PointLight(0xff4400, 8, 60);
+                    fireLight.position.copy(impactPos);
+                    scene.add(fireLight);
+                    let lightF = 0;
+                    const fadeLight = () => {
+                        lightF++;
+                        fireLight.intensity = Math.max(0, 8 - lightF * 0.12);
+                        fireLight.color.setRGB(1, Math.max(0, 0.3 - lightF * 0.005), 0);
+                        if (lightF < 70) requestAnimationFrame(fadeLight);
+                        else scene.remove(fireLight);
+                    };
+                    requestAnimationFrame(fadeLight);
+
+                    // Big money reward
+                    reward = 150 + Math.floor(Math.random() * 151);
+                    if (glock) {
+                        glock.money += reward;
+                        for (let d = 0; d < 20; d++) {
+                            setTimeout(() => glock.spawnDollarBill(), d * 60);
+                        }
+                        if (missionSystem) missionSystem.onMoneyEarned(reward);
+                    }
+
+                    // Clean up helicopter from cop spawner (mesh already scattered)
+                    copSpawner.helicopter = null;
+                    if (copSpawner.wantedLevel > 2) copSpawner.wantedLevel -= 2;
+
+                    // Update title to show impact
+                    titleDiv.textContent = `💥 DESTROYED 💥`;
+                    titleDiv.style.color = '#ffaa00';
+                    titleDiv.style.fontSize = '72px';
+                    titleDiv.style.textShadow = '0 0 40px #ffaa00,0 0 80px #ff6600,0 0 120px #ff0000,3px 3px 0 #000';
+
+                    // Play explosion boom
+                    playExplosionBoom();
+                }
+            } else if (phase === 1) {
+                // === PHASE 1: IMPACT SLOW-MO FREEZE (0-1.5s) ===
+                // Camera slowly zooms into the explosion
+                slowMo = Math.min(0.5, 0.15 + timer * 0.25);
+
+                if (impactPos) {
+                    const zoomDist = Math.max(5, 15 - timer * 8);
+                    camAngle += 0.5 * 0.016;
+                    camera.position.set(
+                        impactPos.x + Math.sin(camAngle) * zoomDist,
+                        impactPos.y + 3 + Math.sin(timer * 2) * 2,
+                        impactPos.z + Math.cos(camAngle) * zoomDist
+                    );
+                    camera.lookAt(impactPos);
+                    camera.fov = 50 + timer * 15;
+                    camera.updateProjectionMatrix();
+                }
+
+                // Spawn lingering fire
+                if (Math.random() < 0.3 && impactPos) {
+                    spawnTrailParticle();
+                    fireParticles[fireParticles.length - 1].mesh.position.copy(impactPos);
+                    fireParticles[fireParticles.length - 1].mesh.position.y += Math.random() * 3;
+                }
+
+                if (timer > 1.5) {
+                    phase = 2;
+                    timer = 0;
+                    slowMo = 1;
+
+                    // Show reward text
+                    titleDiv.textContent = `+$${reward} 💰 ⭐-2`;
+                    titleDiv.style.fontSize = '48px';
+                    titleDiv.style.color = '#00ff88';
+                    titleDiv.style.textShadow = '0 0 20px #00ff88,0 0 40px #00aa44,2px 2px 0 #000';
+                }
+            } else if (phase === 2) {
+                // === PHASE 2: CAR FALLS BACK DOWN (0-3s) ===
+                carVelY += -18 * 0.016;
+                challenger.position.y += carVelY * 0.016;
+                challenger.rotation += 0.03;
+
+                // Drift back toward mountain
+                challenger.position.x += (MTN_PEAK_X - challenger.position.x) * 0.03;
+                challenger.position.z += (MTN_PEAK_Z - challenger.position.z) * 0.03;
+
+                challenger.mesh.position.copy(challenger.position);
+                challenger.mesh.rotation.y = challenger.rotation;
+                // Gradually level out the car
+                challenger.mesh.rotation.z *= 0.95;
+                challenger.mesh.rotation.x *= 0.95;
+
+                // Chase camera from behind
+                const behindDist = 12 + timer * 2;
+                const behindHeight = 6 + Math.max(0, 3 - timer * 2);
+                camera.position.set(
+                    challenger.position.x + Math.sin(challenger.rotation + Math.PI) * behindDist,
+                    challenger.position.y + behindHeight,
+                    challenger.position.z + Math.cos(challenger.rotation + Math.PI) * behindDist
+                );
+                camera.lookAt(challenger.position);
+                camera.fov = 75 + Math.max(0, (1 - timer) * 10);
+                camera.updateProjectionMatrix();
+
+                // Check if car landed
+                const groundY = world.getSpawnHeight(challenger.position.x, challenger.position.z);
+                if (challenger.position.y <= groundY + 1 || timer > 3.5) {
+                    challenger.position.y = Math.max(groundY + 1, challenger.position.y);
+                    challenger.speed = 3;
+                    challenger.mesh.position.copy(challenger.position);
+                    challenger.mesh.rotation.z = 0;
+                    challenger.mesh.rotation.x = 0;
+
+                    // Landing impact shake
+                    let landF = 0;
+                    const landShake = () => {
+                        landF++;
+                        const i = Math.max(0, 1 - landF / 10) * 0.5;
+                        if (smoothCamPos) {
+                            smoothCamPos.y += (Math.random() - 0.5) * i;
+                        }
+                        if (landF < 10) requestAnimationFrame(landShake);
+                    };
+                    requestAnimationFrame(landShake);
+
+                    // Clean up UI
+                    hideCinematicBars();
+                    titleDiv.style.opacity = '0';
+                    titleDiv.style.transform = 'translate(-50%,-50%) scale(1.5)';
+                    vignette.style.opacity = '0';
+                    setTimeout(() => { titleDiv.remove(); vignette.remove(); flash.remove(); }, 1000);
+
+                    // Restore driving camera
+                    smoothCamPos = challenger.getCameraPosition();
+                    camera.fov = 80;
+                    camera.updateProjectionMatrix();
+
+                    mtnTakedownActive = false;
+                    return;
+                }
+            }
+
+            requestAnimationFrame(animateTakedown);
+        };
+
+        requestAnimationFrame(animateTakedown);
+    }
+
+    function playExplosionBoom() {
+        try {
+            const ctx = getAudioCtx();
+            const t = ctx.currentTime;
+
+            // MASSIVE deep boom
+            const boom = ctx.createOscillator();
+            boom.type = 'sine';
+            boom.frequency.setValueAtTime(80, t);
+            boom.frequency.exponentialRampToValueAtTime(15, t + 0.8);
+            const boomGain = ctx.createGain();
+            boomGain.gain.setValueAtTime(0.7, t);
+            boomGain.gain.exponentialRampToValueAtTime(0.01, t + 1.0);
+            boom.connect(boomGain);
+            boomGain.connect(ctx.destination);
+            boom.start(t);
+            boom.stop(t + 1.1);
+
+            // Crackle/debris noise
+            const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.8, ctx.sampleRate);
+            const noiseData = noiseBuf.getChannelData(0);
+            for (let i = 0; i < noiseData.length; i++) {
+                noiseData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.12));
+            }
+            const noise = ctx.createBufferSource();
+            noise.buffer = noiseBuf;
+            const noiseGain = ctx.createGain();
+            noiseGain.gain.setValueAtTime(0.5, t);
+            noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.6);
+            noise.connect(noiseGain);
+            noiseGain.connect(ctx.destination);
+            noise.start(t);
+
+            // Metal crunch
+            const crunch = ctx.createOscillator();
+            crunch.type = 'sawtooth';
+            crunch.frequency.setValueAtTime(200, t);
+            crunch.frequency.exponentialRampToValueAtTime(50, t + 0.3);
+            const crunchGain = ctx.createGain();
+            crunchGain.gain.setValueAtTime(0.3, t);
+            crunchGain.gain.exponentialRampToValueAtTime(0.01, t + 0.35);
+            const dist = ctx.createWaveShaperFunction ? null : null;
+            crunch.connect(crunchGain);
+            crunchGain.connect(ctx.destination);
+            crunch.start(t);
+            crunch.stop(t + 0.4);
+
+            // Secondary explosion (delayed)
+            const boom2 = ctx.createOscillator();
+            boom2.type = 'sine';
+            boom2.frequency.setValueAtTime(50, t + 0.3);
+            boom2.frequency.exponentialRampToValueAtTime(12, t + 1.0);
+            const boom2Gain = ctx.createGain();
+            boom2Gain.gain.setValueAtTime(0.4, t + 0.3);
+            boom2Gain.gain.exponentialRampToValueAtTime(0.01, t + 1.2);
+            boom2.connect(boom2Gain);
+            boom2Gain.connect(ctx.destination);
+            boom2.start(t + 0.3);
+            boom2.stop(t + 1.3);
+        } catch(e) {}
+    }
+
+    function showCinematicBars() {
+        let topBar = document.getElementById('cinema-top');
+        let botBar = document.getElementById('cinema-bottom');
+        if (!topBar) {
+            topBar = document.createElement('div');
+            topBar.id = 'cinema-top';
+            topBar.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:0;background:#000;z-index:500;transition:height 0.5s;';
+            document.body.appendChild(topBar);
+        }
+        if (!botBar) {
+            botBar = document.createElement('div');
+            botBar.id = 'cinema-bottom';
+            botBar.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;height:0;background:#000;z-index:500;transition:height 0.5s;';
+            document.body.appendChild(botBar);
+        }
+        setTimeout(() => {
+            topBar.style.height = '60px';
+            botBar.style.height = '60px';
+        }, 10);
+    }
+
+    function hideCinematicBars() {
+        const topBar = document.getElementById('cinema-top');
+        const botBar = document.getElementById('cinema-bottom');
+        if (topBar) topBar.style.height = '0';
+        if (botBar) botBar.style.height = '0';
+    }
+
+    function playTakedownSound() {
+        try {
+            const ctx = getAudioCtx();
+            const t = ctx.currentTime;
+
+            // Epic whoosh (car flying through air)
+            const whooshBuf = ctx.createBuffer(1, ctx.sampleRate * 1.5, ctx.sampleRate);
+            const whooshData = whooshBuf.getChannelData(0);
+            for (let i = 0; i < whooshData.length; i++) {
+                whooshData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.5));
+            }
+            const whoosh = ctx.createBufferSource();
+            whoosh.buffer = whooshBuf;
+            const whooshGain = ctx.createGain();
+            whooshGain.gain.setValueAtTime(0.3, t);
+            whooshGain.gain.linearRampToValueAtTime(0.1, t + 1.5);
+            const whooshBP = ctx.createBiquadFilter();
+            whooshBP.type = 'bandpass';
+            whooshBP.frequency.setValueAtTime(400, t);
+            whooshBP.frequency.linearRampToValueAtTime(1200, t + 0.5);
+            whooshBP.frequency.linearRampToValueAtTime(200, t + 1.5);
+            whoosh.connect(whooshBP);
+            whooshBP.connect(whooshGain);
+            whooshGain.connect(ctx.destination);
+            whoosh.start(t);
+
+            // Explosion impact (delayed)
+            setTimeout(() => {
+                const t2 = ctx.currentTime;
+                // Deep boom
+                const boom = ctx.createOscillator();
+                boom.type = 'sine';
+                boom.frequency.setValueAtTime(60, t2);
+                boom.frequency.exponentialRampToValueAtTime(20, t2 + 0.5);
+                const boomGain = ctx.createGain();
+                boomGain.gain.setValueAtTime(0.5, t2);
+                boomGain.gain.exponentialRampToValueAtTime(0.01, t2 + 0.6);
+                boom.connect(boomGain);
+                boomGain.connect(ctx.destination);
+                boom.start(t2);
+                boom.stop(t2 + 0.7);
+
+                // Explosion noise
+                const expBuf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
+                const expData = expBuf.getChannelData(0);
+                for (let i = 0; i < expData.length; i++) {
+                    expData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.08));
+                }
+                const exp = ctx.createBufferSource();
+                exp.buffer = expBuf;
+                const expGain = ctx.createGain();
+                expGain.gain.setValueAtTime(0.4, t2);
+                expGain.gain.exponentialRampToValueAtTime(0.01, t2 + 0.4);
+                exp.connect(expGain);
+                expGain.connect(ctx.destination);
+                exp.start(t2);
+            }, 1500);
         } catch(e) {}
     }
 

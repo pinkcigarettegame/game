@@ -109,6 +109,84 @@ class Chunk {
         };
     }
 
+    // Check if a world position is within the Mt. Takedown mountain zone
+    getMountainHeight(wx, wz) {
+        // Mountain center at (256, 256) - at a road intersection
+        const MTN_X = 256;
+        const MTN_Z = 256;
+        const MTN_RADIUS = 45; // Total radius of mountain base
+        const MTN_PEAK = 58;   // Peak height (block Y)
+        const MTN_BASE = 28;   // Base height (roughly ground level)
+        const RAMP_WIDTH = 6;  // Width of the spiral ramp
+        
+        const dx = wx - MTN_X;
+        const dz = wz - MTN_Z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        
+        if (dist > MTN_RADIUS + 5) return null; // Not in mountain zone
+        
+        // Mountain cone shape with smooth falloff
+        let mtnHeight = null;
+        if (dist <= MTN_RADIUS) {
+            // Smooth mountain profile: steep near top, gentle at base
+            const t = 1 - dist / MTN_RADIUS; // 1 at center, 0 at edge
+            const profile = t * t * (3 - 2 * t); // smoothstep
+            mtnHeight = Math.floor(MTN_BASE + (MTN_PEAK - MTN_BASE) * profile);
+        } else {
+            // Smooth blend zone at edges
+            const blend = 1 - (dist - MTN_RADIUS) / 5;
+            if (blend > 0) {
+                mtnHeight = Math.floor(MTN_BASE * blend + MTN_BASE * (1 - blend));
+            }
+        }
+        
+        // Spiral ramp carved into the mountain
+        // The ramp spirals from base to peak, making ~2.5 full rotations
+        if (dist > 3 && dist < MTN_RADIUS - 1) {
+            const angle = Math.atan2(dz, dx); // -PI to PI
+            const normalizedAngle = (angle + Math.PI) / (2 * Math.PI); // 0 to 1
+            
+            // Ramp height increases with angle + number of rotations
+            // Total rotations: 2.5 turns from base to peak
+            const totalRotations = 2.5;
+            const heightPerRotation = (MTN_PEAK - MTN_BASE) / totalRotations;
+            
+            // For each possible rotation level, check if this position is on the ramp
+            for (let rot = 0; rot < totalRotations; rot++) {
+                const rampBaseHeight = MTN_BASE + (rot + normalizedAngle) * heightPerRotation;
+                const rampHeight = Math.floor(rampBaseHeight);
+                
+                // Check if the mountain surface at this distance matches the ramp height
+                // The ramp is carved where the mountain surface is near the ramp height
+                const surfaceHeight = mtnHeight;
+                if (surfaceHeight !== null && Math.abs(surfaceHeight - rampHeight) < RAMP_WIDTH) {
+                    // This position is on or near the ramp - flatten to ramp height
+                    const rampDist = Math.abs(surfaceHeight - rampHeight);
+                    if (rampDist < RAMP_WIDTH / 2) {
+                        return { height: rampHeight, isRamp: true, isPeak: false };
+                    }
+                }
+            }
+        }
+        
+        // Peak area - flat landing pad at the top with a jump ramp
+        if (dist <= 5) {
+            // Flat peak
+            const peakHeight = MTN_PEAK;
+            // Jump ramp at the edge of the peak (north side)
+            if (dz < -1 && dz > -5 && Math.abs(dx) < 3) {
+                const rampProgress = (-dz - 1) / 3; // 0 at center, 1 at edge
+                return { height: Math.floor(peakHeight + rampProgress * 4), isRamp: true, isPeak: true };
+            }
+            return { height: peakHeight, isRamp: false, isPeak: true };
+        }
+        
+        if (mtnHeight !== null) {
+            return { height: mtnHeight, isRamp: false, isPeak: false };
+        }
+        return null;
+    }
+
     generate(noise) {
         const worldX = this.cx * CHUNK_SIZE;
         const worldZ = this.cz * CHUNK_SIZE;
@@ -155,6 +233,18 @@ class Chunk {
                     finalHeight = Math.round(ri.roadHeight * (1 - t) + height * t);
                 }
 
+                // === MT. TAKEDOWN: Override terrain with mountain ===
+                const mtnInfo = this.getMountainHeight(wx, wz);
+                let isMountain = false;
+                let isMtnRamp = false;
+                let isMtnPeak = false;
+                if (mtnInfo) {
+                    finalHeight = mtnInfo.height;
+                    isMountain = true;
+                    isMtnRamp = mtnInfo.isRamp;
+                    isMtnPeak = mtnInfo.isPeak;
+                }
+
                 for (let y = 0; y < CHUNK_HEIGHT; y++) {
                     let blockType = BlockType.AIR;
 
@@ -165,7 +255,16 @@ class Chunk {
                     } else if (y < finalHeight - 1) {
                         blockType = BlockType.DIRT;
                     } else if (y === finalHeight - 1) {
-                        if (ri.onRoad && finalHeight > WATER_LEVEL + 1) {
+                        if (isMountain) {
+                            // Mountain surface blocks
+                            if (isMtnRamp || isMtnPeak) {
+                                blockType = BlockType.ROAD_ASPHALT; // Driveable ramp surface
+                            } else if (finalHeight > 48) {
+                                blockType = BlockType.STONE; // Snow-capped look (stone near peak)
+                            } else {
+                                blockType = BlockType.STONE; // Rocky mountain surface
+                            }
+                        } else if (ri.onRoad && finalHeight > WATER_LEVEL + 1) {
                             // Road surface block
                             const distZ = ri.distFromZCenter;
                             const distX = ri.distFromXCenter;

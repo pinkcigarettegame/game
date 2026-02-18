@@ -95,8 +95,8 @@
         if (historicCount !== null) {
             updateDisplay(historicCount, null);
         } else {
-            // If GoatCounter API is unavailable, show a generic message
-            el.innerHTML = '🌍 Players worldwide — <a href="https://pinkcig7.goatcounter.com" target="_blank" rel="noopener" style="color:#ff88cc; text-decoration:underline;">view stats</a>';
+            // If GoatCounter API is unavailable, show a generic message (no links to avoid blocking start screen clicks)
+            el.innerHTML = '🌍 Players worldwide';
         }
 
         // Start tracking online players from multiplayer system

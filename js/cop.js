@@ -569,13 +569,15 @@ class CopSpawner {
             this.spawnCooldown = Math.max(5, this.spawnInterval - this.wantedLevel * 0.5);
         }
 
-        // Spawn police motorcycles at 3+ stars
+        // Spawn police motorcycles (more aggressive at 3+ stars)
         this.motorcycleSpawnCooldown -= dt;
         const maxMotorcycles = this.getMaxMotorcycles();
 
         if (this.motorcycleSpawnCooldown <= 0 && this.motorcycles.length < maxMotorcycles && this.wantedLevel >= 1) {
             this.trySpawnMotorcycle(playerPos);
-            this.motorcycleSpawnCooldown = Math.max(3, this.motorcycleSpawnInterval - this.wantedLevel * 0.8);
+            // Faster spawning at higher wanted levels
+            const motoInterval = this.wantedLevel >= 3 ? Math.max(2, this.motorcycleSpawnInterval - this.wantedLevel * 1.0) : Math.max(3, this.motorcycleSpawnInterval - this.wantedLevel * 0.8);
+            this.motorcycleSpawnCooldown = motoInterval;
         }
 
         // Update all cops
@@ -688,8 +690,9 @@ class CopSpawner {
         const playerRoadX = Math.round(playerPos.x / ROAD_SPACING) * ROAD_SPACING;
         const playerRoadZ = Math.round(playerPos.z / ROAD_SPACING) * ROAD_SPACING;
 
-        // Pick a random road segment 1-2 road spacings away from the player
-        const roadOffsets = [-2, -1, 1, 2];
+        // Pick a random road segment - closer at higher wanted levels
+        const roadOffsets = this.wantedLevel >= 3 ? [-1, 1] : [-2, -1, 1, 2];
+        const spawnDist = this.wantedLevel >= 3 ? (25 + Math.random() * 35) : (40 + Math.random() * 60);
         const useXRoad = Math.random() > 0.5;
         let sx, sz, spawnRotation;
 
@@ -699,7 +702,7 @@ class CopSpawner {
             sz = playerRoadZ + zOffset * ROAD_SPACING;
             // Random position along that road, offset from player
             const xDir = Math.random() > 0.5 ? 1 : -1;
-            sx = playerPos.x + xDir * (40 + Math.random() * 60);
+            sx = playerPos.x + xDir * spawnDist;
             // Apply noise offset to match actual road center
             const zRoadOffset = this.world.noise ? this.world.noise.noise2D(sx * 0.005, Math.round(sz / ROAD_SPACING) * ROAD_SPACING * 0.1) * 4 : 0;
             sz += zRoadOffset;
@@ -711,7 +714,7 @@ class CopSpawner {
             sx = playerRoadX + xOffset * ROAD_SPACING;
             // Random position along that road, offset from player
             const zDir = Math.random() > 0.5 ? 1 : -1;
-            sz = playerPos.z + zDir * (40 + Math.random() * 60);
+            sz = playerPos.z + zDir * spawnDist;
             // Apply noise offset to match actual road center
             const xRoadOffset = this.world.noise ? this.world.noise.noise2D(Math.round(sx / ROAD_SPACING) * ROAD_SPACING * 0.1, sz * 0.005) * 4 : 0;
             sx += xRoadOffset;

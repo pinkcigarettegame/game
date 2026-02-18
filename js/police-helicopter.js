@@ -11,7 +11,7 @@ class PoliceHelicopter {
         this.rotation = 0;
         this.alive = true;
         this.health = 40;
-        this.hoverHeight = 25; // How high above the player to hover
+        this.hoverHeight = 18; // How high above the player to hover (lowered for easier crashing)
         this.speed = 0;
         this.maxSpeed = 18;
         this.acceleration = 6;
@@ -21,6 +21,12 @@ class PoliceHelicopter {
         this.attackCooldown = 0;
         this.attackInterval = 1.2;
         this.damage = 2;
+
+        // Stealing mechanic
+        this.stolen = false;
+        this.crashed = false;
+        this.crashedTimer = 0;
+        this.stealable = false;
 
         this.rotorPhase = 0;
         this.sirenLightPhase = 0;
@@ -390,8 +396,64 @@ class PoliceHelicopter {
             this.tailRotor.rotation.z = this.rotorPhase * 1.5;
         }
 
-        // Always chase when wanted level >= 5
-        this.chasing = wantedLevel >= 5;
+        // Always chase when wanted level >= 5 (unless stolen/crashed)
+        this.chasing = wantedLevel >= 5 && !this.stolen && !this.crashed;
+
+        // When damaged, helicopter dips lower - easier to crash into!
+        var damageRatio = this.health / 40;
+        var effectiveHoverHeight = this.hoverHeight * (0.4 + 0.6 * damageRatio); // At low health, hovers at ~40% of normal height
+        
+        // Check if helicopter is stealable (low enough and damaged enough)
+        var groundY_check = this.world.getSpawnHeight(this.position.x, this.position.z);
+        var heightAboveGround_check = this.position.y - groundY_check;
+        this.stealable = (heightAboveGround_check < 6 || this.health <= 15) && !this.stolen;
+
+        // Handle crashed state (helicopter on ground, stealable)
+        if (this.crashed && !this.stolen) {
+            this.crashedTimer += dt;
+            // Crashed helicopter slowly loses rotor speed
+            this.rotorPhase += dt * Math.max(2, 25 - this.crashedTimer * 3);
+            if (this.rotorGroup) this.rotorGroup.rotation.y = this.rotorPhase;
+            if (this.tailRotor) this.tailRotor.rotation.z = this.rotorPhase * 1.5;
+            
+            // Settle on ground
+            var crashGroundY = this.world.getSpawnHeight(this.position.x, this.position.z);
+            if (this.position.y > crashGroundY + 1.5) {
+                this.velocity.y -= 8 * dt;
+                this.position.y += this.velocity.y * dt;
+            } else {
+                this.position.y = crashGroundY + 1.5;
+                this.velocity.y = 0;
+                this.velocity.x *= 0.95;
+                this.velocity.z *= 0.95;
+            }
+            this.position.x += this.velocity.x * dt;
+            this.position.z += this.velocity.z * dt;
+            
+            // Tilt when crashed
+            this.tiltX = Math.sin(this.crashedTimer * 0.5) * 0.05;
+            this.tiltZ = 0.1;
+            
+            this.mesh.position.copy(this.position);
+            this.mesh.rotation.y = this.rotation;
+            this.mesh.rotation.x = this.tiltX;
+            this.mesh.rotation.z = this.tiltZ;
+            
+            if (this.spotlightMesh) this.spotlightMesh.visible = false;
+            if (this.spotlightGround) this.spotlightGround.visible = false;
+            
+            // Crashed helicopter disappears after 30 seconds if not stolen
+            if (this.crashedTimer > 30) this.alive = false;
+            return;
+        }
+
+        // If health drops very low, crash the helicopter
+        if (this.health <= 5 && !this.crashed && !this.stolen) {
+            this.crashed = true;
+            this.crashedTimer = 0;
+            this.velocity.y = -3;
+            return;
+        }
 
         if (this.chasing) {
             // Sounds
@@ -400,10 +462,10 @@ class PoliceHelicopter {
                 this.playSiren();
             }
 
-            // Target position: above the player
+            // Target position: above the player (lower when damaged!)
             var targetX = playerPos.x;
             var targetZ = playerPos.z;
-            var targetY = playerPos.y + this.hoverHeight;
+            var targetY = playerPos.y + effectiveHoverHeight;
 
             // Horizontal pursuit - move toward player position
             var dx = targetX - this.position.x;
@@ -475,10 +537,11 @@ class PoliceHelicopter {
         this.position.y += this.velocity.y * dt;
         this.position.z += this.velocity.z * dt;
 
-        // Don't go below ground
+        // Don't go below ground - lower minimum when damaged for easier crashing
         var groundY = this.world.getSpawnHeight(this.position.x, this.position.z);
-        if (this.position.y < groundY + 8) {
-            this.position.y = groundY + 8;
+        var minClearance = this.health <= 15 ? 3 : (this.health <= 25 ? 5 : 8);
+        if (this.position.y < groundY + minClearance) {
+            this.position.y = groundY + minClearance;
             this.velocity.y = Math.max(0, this.velocity.y);
         }
 
