@@ -282,7 +282,7 @@ class PoliceMotorcycle {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             var ctx = this.audioCtx;
             var t = ctx.currentTime;
@@ -333,7 +333,7 @@ class PoliceMotorcycle {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             var ctx = this.audioCtx;
             var t = ctx.currentTime;
@@ -468,8 +468,8 @@ class PoliceMotorcycle {
             }
         }
 
-        // Chase behavior - always chase when wanted level >= 2 (no distance limit)
-        this.chasing = wantedLevel >= 2;
+        // Chase behavior - always chase when wanted level >= 1 (no distance limit)
+        this.chasing = wantedLevel >= 1;
 
         if (this.chasing) {
             // Play siren when within audible range

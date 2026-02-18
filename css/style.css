@@ -828,6 +828,263 @@ canvas {
     color: #00ff88;
 }
 
+/* ==================== MISSION SYSTEM ==================== */
+
+/* Mission Tracker (top center HUD) */
+#mission-tracker {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 380;
+    pointer-events: none;
+    display: none;
+}
+
+#mission-tracker-inner {
+    background: linear-gradient(135deg, rgba(10, 5, 20, 0.85) 0%, rgba(30, 10, 40, 0.85) 100%);
+    border: 2px solid #ff69b4;
+    border-radius: 10px;
+    padding: 8px 20px 10px;
+    text-align: center;
+    min-width: 260px;
+    box-shadow: 0 0 20px rgba(255, 105, 180, 0.3), 0 0 40px rgba(255, 105, 180, 0.1);
+}
+
+#mission-tracker-label {
+    font-size: 11px;
+    color: rgba(255, 105, 180, 0.7);
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+
+#mission-tracker-title {
+    font-size: 16px;
+    color: #ffffff;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    text-shadow: 0 0 6px rgba(255, 105, 180, 0.5);
+    margin-bottom: 6px;
+}
+
+#mission-tracker-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 105, 180, 0.3);
+}
+
+#mission-tracker-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #ff1493, #ff69b4, #ff1493);
+    border-radius: 4px;
+    transition: width 0.4s ease-out;
+    box-shadow: 0 0 8px rgba(255, 20, 147, 0.6);
+}
+
+#mission-tracker-count {
+    font-size: 13px;
+    color: #ffd700;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    margin-top: 4px;
+    text-shadow: 0 0 4px rgba(255, 215, 0, 0.4);
+}
+
+/* Flash effect when progress updates */
+#mission-tracker.flash #mission-tracker-inner {
+    animation: missionFlash 0.4s ease-out;
+}
+
+@keyframes missionFlash {
+    0% { border-color: #ffffff; box-shadow: 0 0 30px rgba(255, 255, 255, 0.5); }
+    100% { border-color: #ff69b4; box-shadow: 0 0 20px rgba(255, 105, 180, 0.3); }
+}
+
+/* Mission Complete Banner */
+#mission-complete-banner {
+    position: fixed;
+    top: 35%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.3);
+    z-index: 700;
+    pointer-events: none;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    font-family: 'Impact', 'Arial Black', sans-serif;
+    opacity: 0;
+}
+
+#mission-complete-banner.active {
+    display: flex !important;
+    animation: missionCompletePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+               missionCompleteFade 3.5s ease-out forwards;
+}
+
+#mission-complete-emoji {
+    font-size: 64px;
+    filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.8));
+    margin-bottom: 8px;
+}
+
+#mission-complete-text {
+    font-size: 52px;
+    color: #ffd700;
+    text-shadow: 0 0 15px #ffd700, 0 0 30px #ff8c00, 0 0 60px #ffd700, 3px 3px 8px rgba(0,0,0,0.9);
+    letter-spacing: 4px;
+    text-transform: uppercase;
+}
+
+#mission-complete-reward {
+    font-size: 28px;
+    color: #00ff44;
+    text-shadow: 0 0 10px #00ff44, 2px 2px 4px rgba(0,0,0,0.8);
+    margin-top: 8px;
+    letter-spacing: 2px;
+}
+
+@keyframes missionCompletePop {
+    0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
+    100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+@keyframes missionCompleteFade {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
+    70% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -60%) scale(1.05); }
+}
+
+/* New Mission Banner */
+#mission-new-banner {
+    position: fixed;
+    top: 20%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 700;
+    pointer-events: none;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    font-family: 'Courier New', monospace;
+    opacity: 0;
+}
+
+#mission-new-banner.active {
+    display: flex !important;
+    animation: missionNewSlide 0.5s ease-out forwards,
+               missionNewFade 3.5s ease-out forwards;
+}
+
+#mission-new-label {
+    font-size: 16px;
+    color: #ff69b4;
+    font-weight: bold;
+    letter-spacing: 3px;
+    text-shadow: 0 0 8px rgba(255, 105, 180, 0.6);
+    margin-bottom: 4px;
+}
+
+#mission-new-title {
+    font-size: 32px;
+    color: #ffffff;
+    font-weight: bold;
+    text-shadow: 0 0 10px rgba(255, 105, 180, 0.5), 2px 2px 4px rgba(0,0,0,0.8);
+    letter-spacing: 2px;
+}
+
+#mission-new-desc {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 6px;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+}
+
+@keyframes missionNewSlide {
+    0% { transform: translate(-50%, -30%) scale(0.8); opacity: 0; }
+    100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+@keyframes missionNewFade {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
+    70% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+/* Final Banner - PIMP KING */
+#mission-final-banner {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.3);
+    z-index: 800;
+    pointer-events: none;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    font-family: 'Impact', 'Arial Black', sans-serif;
+    opacity: 0;
+}
+
+#mission-final-banner.active {
+    display: flex !important;
+    animation: missionFinalPop 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+               missionFinalFade 6s ease-out forwards;
+}
+
+#mission-final-crown {
+    font-size: 96px;
+    filter: drop-shadow(0 0 20px rgba(255, 215, 0, 1));
+    animation: crownBounce 1s ease-in-out infinite;
+}
+
+#mission-final-text {
+    font-size: 72px;
+    color: #ffd700;
+    text-shadow: 0 0 20px #ffd700, 0 0 40px #ff8c00, 0 0 80px #ffd700, 4px 4px 10px rgba(0,0,0,0.9);
+    letter-spacing: 8px;
+    text-transform: uppercase;
+}
+
+#mission-final-sub {
+    font-size: 22px;
+    color: #ff69b4;
+    text-shadow: 0 0 10px rgba(255, 105, 180, 0.6), 2px 2px 4px rgba(0,0,0,0.8);
+    margin-top: 8px;
+    letter-spacing: 3px;
+    font-family: 'Courier New', monospace;
+}
+
+@keyframes missionFinalPop {
+    0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
+    60% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+@keyframes missionFinalFade {
+    0% { opacity: 0; }
+    12% { opacity: 1; }
+    75% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+@keyframes crownBounce {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    25% { transform: translateY(-8px) rotate(-3deg); }
+    75% { transform: translateY(-8px) rotate(3deg); }
+}
+
 /* ==================== MINIMAP ==================== */
 #minimap-container {
     position: fixed;

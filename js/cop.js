@@ -186,7 +186,7 @@ class Cop {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -236,7 +236,7 @@ class Cop {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -284,7 +284,7 @@ class Cop {
     playBatonHit() {
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -538,12 +538,13 @@ class CopSpawner {
     }
 
     getMaxMotorcycles() {
-        // Police motorcycles at 2+ stars
-        if (this.wantedLevel < 2) return 0;
-        if (this.wantedLevel === 2) return 1;
-        if (this.wantedLevel === 3) return 2;
-        if (this.wantedLevel === 4) return 3;
-        return 4; // 5 stars = 4 motorcycles max
+        // Police motorcycles at 1+ stars (lowered threshold so they appear more)
+        if (this.wantedLevel < 1) return 0;
+        if (this.wantedLevel === 1) return 1;
+        if (this.wantedLevel === 2) return 2;
+        if (this.wantedLevel === 3) return 3;
+        if (this.wantedLevel === 4) return 4;
+        return 5; // 5 stars = 5 motorcycles max
     }
 
     update(dt, playerPos) {
@@ -569,9 +570,9 @@ class CopSpawner {
         this.motorcycleSpawnCooldown -= dt;
         const maxMotorcycles = this.getMaxMotorcycles();
 
-        if (this.motorcycleSpawnCooldown <= 0 && this.motorcycles.length < maxMotorcycles && this.wantedLevel >= 2) {
+        if (this.motorcycleSpawnCooldown <= 0 && this.motorcycles.length < maxMotorcycles && this.wantedLevel >= 1) {
             this.trySpawnMotorcycle(playerPos);
-            this.motorcycleSpawnCooldown = Math.max(4, this.motorcycleSpawnInterval - (this.wantedLevel - 2) * 1.0);
+            this.motorcycleSpawnCooldown = Math.max(3, this.motorcycleSpawnInterval - this.wantedLevel * 0.8);
         }
 
         // Update all cops
@@ -621,8 +622,8 @@ class CopSpawner {
             }
         }
 
-        // If wanted level drops below 2, despawn motorcycles gradually
-        if (this.wantedLevel < 2) {
+        // If wanted level drops to 0, despawn motorcycles gradually
+        if (this.wantedLevel < 1) {
             for (let i = this.motorcycles.length - 1; i >= 0; i--) {
                 if (this.motorcycles[i].position.distanceTo(playerPos) > 40) {
                     this.motorcycles[i].dispose();

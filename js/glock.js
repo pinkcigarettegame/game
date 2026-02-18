@@ -23,6 +23,13 @@ class Glock {
         this.audioCtx = null;
         this.lastShotTime = 0;
 
+        // Cached DOM refs for per-frame updates (performance)
+        this._ammoDisplay = null;
+        this._ammoCount = null;
+        this._reloadText = null;
+        this._wantedEl = null;
+        this._domCached = false;
+
         // Create the gun model (attached to camera)
         this.gunGroup = this.createGunModel();
         this.gunGroup.visible = false;
@@ -255,7 +262,7 @@ class Glock {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -519,6 +526,8 @@ class Glock {
                         this.copSpawner.cops.splice(i, 1);
                         this.copSpawner.addWanted(1);
                         this.registerKill();
+                        // === MISSION: Cop killed by glock ===
+                        if (window.missionSystem) window.missionSystem.onCopKilled();
                     } else {
                         // Cop shouts when hit
                         cop.playShout();
@@ -1060,7 +1069,7 @@ class Glock {
     playMoneyFlashSound() {
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -1199,7 +1208,7 @@ class Glock {
     playEmptyClick() {
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -1221,7 +1230,7 @@ class Glock {
     playReloadSound() {
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -1388,7 +1397,7 @@ class Glock {
     playShellTink() {
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -1409,9 +1418,16 @@ class Glock {
 
     // === AMMO DISPLAY ===
     updateAmmoDisplay() {
-        const ammoDisplay = document.getElementById('ammo-display');
-        const ammoCount = document.getElementById('ammo-count');
-        const reloadText = document.getElementById('reload-text');
+        if (!this._domCached) {
+            this._ammoDisplay = document.getElementById('ammo-display');
+            this._ammoCount = document.getElementById('ammo-count');
+            this._reloadText = document.getElementById('reload-text');
+            this._wantedEl = document.getElementById('wanted-stars');
+            this._domCached = true;
+        }
+        const ammoDisplay = this._ammoDisplay;
+        const ammoCount = this._ammoCount;
+        const reloadText = this._reloadText;
         if (!ammoDisplay || !ammoCount) return;
 
         if (this.equipped) {
@@ -1440,7 +1456,14 @@ class Glock {
 
     // === WANTED STARS DISPLAY ===
     updateWantedDisplay() {
-        const wantedEl = document.getElementById('wanted-stars');
+        if (!this._domCached) {
+            this._ammoDisplay = document.getElementById('ammo-display');
+            this._ammoCount = document.getElementById('ammo-count');
+            this._reloadText = document.getElementById('reload-text');
+            this._wantedEl = document.getElementById('wanted-stars');
+            this._domCached = true;
+        }
+        const wantedEl = this._wantedEl;
         if (!wantedEl || !this.copSpawner) return;
 
         const level = Math.floor(this.copSpawner.wantedLevel);
@@ -1752,7 +1775,7 @@ class Glock {
     playKillStreakSound(streak) {
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;

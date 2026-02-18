@@ -9,6 +9,7 @@
     let liquorStoreSpawner;
     let billboardSpawner;
     let stripClubManager;
+    let missionSystem;
     let glock;
     let challenger; // Pimp Dodge Challenger
     let clock;
@@ -24,6 +25,8 @@
     let rKeyWasDown = false;
     let uKeyWasDown = false;
     let bKeyWasDown = false;
+    let fKeyWasDown = false;
+    let bDepositKeyWasDown = false;
     let shopMenuOpen = false;
     let drivingMode = false;
     let moneySpreadMode = false; // Third-person money spread on foot
@@ -62,6 +65,8 @@
         }
         return sharedAudioCtx;
     }
+    // Expose globally so all NPC classes can share one AudioContext
+    window.getSharedAudioCtx = getAudioCtx;
 
     // High effect state
     let highLevel = 0; // 0 = sober, 1 = max high
@@ -167,6 +172,12 @@
         // Spawn strip club manager
         stripClubManager = new StripClubManager(world, scene);
 
+        // Initialize mission system
+        missionSystem = new MissionSystem();
+        missionSystem.glockRef = glock;
+        missionSystem.show();
+        window.missionSystem = missionSystem;
+
         // Start fetching real crypto prices for liquor store tickers
         if (window.cryptoPriceFetcher) {
             window.cryptoPriceFetcher.start();
@@ -177,6 +188,7 @@
         liquorStoreSpawner.player = player;
         liquorStoreSpawner.glock = glock;
         liquorStoreSpawner.stripperSpawner = stripperSpawner;
+        if (stripClubManager) stripClubManager.glock = glock;
 
         // Force-spawn the first liquor store near the player and teleport player there
         const firstStore = liquorStoreSpawner.forceSpawnAtRoad(player.position.x, player.position.z);
@@ -284,6 +296,8 @@
     // === MINIMAP SYSTEM ===
     let minimapCanvas = null;
     let minimapCtx = null;
+    let minimapFrameCounter = 0;
+    let waterAnimTimer = 0;
     const MINIMAP_SIZE = 160;
     const MINIMAP_SCALE = 1.2; // pixels per block (so ~67 block radius visible)
     const MINIMAP_CENTER = MINIMAP_SIZE / 2;
@@ -730,6 +744,113 @@
             // Update strip clubs on foot
             if (stripClubManager) stripClubManager.update(dt, player.position);
 
+            // === STRIP CLUB PROXIMITY: Floor upgrade (F key) and deposit hookers (B key) ===
+            if (stripClubManager && !shopMenuOpen) {
+                const nearClub = stripClubManager.getNearestClub(player.position, 15);
+                const clubPrompt = document.getElementById('club-prompt');
+                if (nearClub) {
+                    // Show club interaction prompt
+                    if (clubPrompt) {
+                        const cost = nearClub.getFloorUpgradeCost();
+                        const costStr = cost === Infinity ? 'MAX' : '$' + cost;
+                        const income = nearClub.getIncomePerSecond();
+                        clubPrompt.innerHTML = `💃 STRIP CLUB | Floor ${nearClub.floors}/${nearClub.maxFloors} | ${nearClub.stripperScore} hookers | $${income}/s<br>` +
+                            `[F] Add Floor (${costStr}) | [B] Deposit Hookers`;
+                        clubPrompt.style.display = 'block';
+                    }
+
+                    // F key: Buy floor upgrade
+                    const fKeyDown = input.keys['KeyF'];
+                    if (fKeyDown && !fKeyWasDown) {
+                        const upgradeCost = nearClub.getFloorUpgradeCost();
+                        if (upgradeCost !== Infinity && glock && glock.money >= upgradeCost) {
+                            glock.money -= upgradeCost;
+                            nearClub.addFloor();
+                            // Play purchase sound
+                            if (activeShopStore && activeShopStore.playPurchaseSound) {
+                                activeShopStore.playPurchaseSound();
+                            }
+                            // Show message
+                            const inviteMsg = document.getElementById('invite-message');
+                            if (inviteMsg) {
+                                inviteMsg.textContent = `🏗️ FLOOR ${nearClub.floors} ADDED! Income: $${nearClub.getIncomePerSecond()}/s 💰`;
+                                inviteMsg.classList.remove('active');
+                                inviteMsg.style.display = 'none';
+                                void inviteMsg.offsetWidth;
+                                inviteMsg.style.display = 'block';
+                                inviteMsg.classList.add('active');
+                                setTimeout(() => { inviteMsg.classList.remove('active'); inviteMsg.style.display = 'none'; }, 3000);
+                            }
+                        } else if (upgradeCost === Infinity) {
+                            const brokeMsg = document.getElementById('broke-message');
+                            if (brokeMsg) {
+                                brokeMsg.textContent = '🏢 MAX FLOORS REACHED! 🏢';
+                                brokeMsg.classList.remove('active'); brokeMsg.style.display = 'none';
+                                void brokeMsg.offsetWidth;
+                                brokeMsg.style.display = 'block'; brokeMsg.classList.add('active');
+                                setTimeout(() => { brokeMsg.classList.remove('active'); brokeMsg.style.display = 'none'; }, 2000);
+                            }
+                        } else {
+                            showBrokeMessage();
+                            playBrokeSound();
+                        }
+                    }
+                    fKeyWasDown = !!fKeyDown;
+
+                    // B key: Deposit hookers from following strippers + car passengers
+                    const bDepositDown = input.keys['KeyB'];
+                    if (bDepositDown && !bDepositKeyWasDown) {
+                        let deposited = 0;
+                        // Deposit on-foot strippers
+                        if (stripperSpawner && stripperSpawner.strippers) {
+                            for (let i = stripperSpawner.strippers.length - 1; i >= 0; i--) {
+                                const s = stripperSpawner.strippers[i];
+                                if (s.alive && (s.collected || s.hired) && !s.inCar) {
+                                    deposited++;
+                                    s.alive = false;
+                                    if (s.mesh) scene.remove(s.mesh);
+                                    stripperSpawner.strippers.splice(i, 1);
+                                }
+                            }
+                        }
+                        // Deposit car passengers
+                        if (challenger && challenger.passengers) {
+                            for (let i = challenger.passengers.length - 1; i >= 0; i--) {
+                                const s = challenger.passengers[i];
+                                deposited++;
+                                s.alive = false;
+                                s.inCar = false;
+                                if (s.mesh) scene.remove(s.mesh);
+                            }
+                            challenger.passengers = [];
+                        }
+                        if (deposited > 0) {
+                            nearClub.depositStrippers(deposited);
+                            const inviteMsg = document.getElementById('invite-message');
+                            if (inviteMsg) {
+                                inviteMsg.textContent = `💃 ${deposited} HOOKERS DEPOSITED! Income: $${nearClub.getIncomePerSecond()}/s 💰`;
+                                inviteMsg.classList.remove('active'); inviteMsg.style.display = 'none';
+                                void inviteMsg.offsetWidth;
+                                inviteMsg.style.display = 'block'; inviteMsg.classList.add('active');
+                                setTimeout(() => { inviteMsg.classList.remove('active'); inviteMsg.style.display = 'none'; }, 3000);
+                            }
+                        } else {
+                            const brokeMsg = document.getElementById('broke-message');
+                            if (brokeMsg) {
+                                brokeMsg.textContent = '🤷 No hookers to deposit! 🤷';
+                                brokeMsg.classList.remove('active'); brokeMsg.style.display = 'none';
+                                void brokeMsg.offsetWidth;
+                                brokeMsg.style.display = 'block'; brokeMsg.classList.add('active');
+                                setTimeout(() => { brokeMsg.classList.remove('active'); brokeMsg.style.display = 'none'; }, 2000);
+                            }
+                        }
+                    }
+                    bDepositKeyWasDown = !!bDepositDown;
+                } else {
+                    if (clubPrompt) clubPrompt.style.display = 'none';
+                }
+            }
+
             // Update crypto billboards on foot
             if (billboardSpawner) billboardSpawner.update(dt, player.position);
         }
@@ -807,8 +928,15 @@
             remoteRenderer.update(dt, camera.position);
         }
 
-        // Update minimap
-        updateMinimap();
+        // Update minimap (throttled to ~10fps for performance)
+        minimapFrameCounter++;
+        if (minimapFrameCounter >= 6) {
+            minimapFrameCounter = 0;
+            updateMinimap();
+        }
+
+        // Update mission system
+        if (missionSystem) missionSystem.update(dt);
 
         // Render
         renderer.render(scene, camera);
@@ -1193,6 +1321,9 @@
         hookerCombo++;
         hookerComboTimer = HOOKER_COMBO_WINDOW; // Reset combo timer
         showComboMessage(hookerCombo, challenger.getPassengerCount());
+
+        // === MISSION: Stripper collected ===
+        if (missionSystem) missionSystem.onStripperCollected();
     }
 
     function showComboMessage(combo, totalInCar) {
@@ -1573,6 +1704,8 @@
                             glock.spawnDollarBill();
                         }
                         if (copSpawner) copSpawner.addWanted(2);
+                        // === MISSION: Cop killed by car ===
+                        if (missionSystem) missionSystem.onCopKilled();
                     } else {
                         // Low speed - push them with smooth physics
                         cop.health -= Math.ceil(carSpeed * 3);
@@ -1596,6 +1729,8 @@
                                 glock.spawnDollarBill();
                             }
                             if (copSpawner) copSpawner.addWanted(2);
+                            // === MISSION: Cop killed by car ===
+                            if (missionSystem) missionSystem.onCopKilled();
                         } else {
                             if (copSpawner) copSpawner.addWanted(1);
                         }
@@ -1610,6 +1745,11 @@
             shakeCarCamera(hitCount);
             showRunoverMessage(hitCount);
             // No car slowdown - plow right through!
+
+            // === MISSION: Roadkill tracking ===
+            if (missionSystem && hitCount > 0) {
+                missionSystem.onRoadkill(hitCount);
+            }
         }
     }
 
@@ -2305,6 +2445,9 @@
                 inviteMsg.style.display = 'none';
             }, 4000);
         }
+
+        // === MISSION: Strip club purchased ===
+        if (missionSystem) missionSystem.onStripClubPurchased();
 
         // Refresh shop UI
         refreshShopUI();

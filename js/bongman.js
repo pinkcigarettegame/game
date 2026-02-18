@@ -181,10 +181,7 @@ class BongMan {
         this.lastSoundTime = now;
 
         try {
-            if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            const ctx = this.audioCtx;
+            const ctx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             const t = ctx.currentTime;
 
             // Chill "heh heh" laugh
@@ -222,10 +219,7 @@ class BongMan {
 
     playBongBubble() {
         try {
-            if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            const ctx = this.audioCtx;
+            const ctx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             const t = ctx.currentTime;
 
             // Bubbling water sound
@@ -379,9 +373,11 @@ class BongMan {
 
         // Update persistent smoke cloud
         this.smokeCloudTimer -= dt;
-        if (this.smokeCloudTimer <= 0) {
+        if (this.smokeCloudTimer <= 0 && this.smokeCloud.length < 8) {
             this.spawnSmokeParticle();
-            this.smokeCloudTimer = 0.15; // Spawn smoke frequently
+            this.smokeCloudTimer = 0.5; // Spawn smoke (throttled for perf)
+        } else if (this.smokeCloudTimer <= 0) {
+            this.smokeCloudTimer = 0.5;
         }
         this.updateSmokeCloud(dt);
 
@@ -414,7 +410,7 @@ class BongMan {
 
     spawnSmokeParticle() {
         const size = 0.4 + Math.random() * 0.8;
-        const geo = new THREE.SphereGeometry(size, 5, 5);
+        const geo = new THREE.BoxGeometry(size, size, size);
         const shade = 0.6 + Math.random() * 0.3;
         const color = new THREE.Color(shade, shade, shade);
         const mat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.25 + Math.random() * 0.2 });
@@ -463,13 +459,14 @@ class BongMan {
     }
 
     createSmokeEffect() {
-        const geo = new THREE.SphereGeometry(0.6, 6, 6);
+        const geo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
         const mat = new THREE.MeshBasicMaterial({ color: 0xcccccc, transparent: true, opacity: 0.5 });
         this.smokePuff = new THREE.Mesh(geo, mat);
         this.smokePuff.position.set(this.position.x, this.position.y + 1.6, this.position.z);
         this.scene.add(this.smokePuff);
-        // Extra burst of smoke when hitting the bong
-        for (let i = 0; i < 8; i++) {
+        // Extra burst of smoke when hitting the bong (capped)
+        const burstCount = Math.min(3, 8 - this.smokeCloud.length);
+        for (let i = 0; i < burstCount; i++) {
             this.spawnSmokeParticle();
         }
     }
@@ -511,7 +508,7 @@ class BongManSpawner {
         this.world = world;
         this.scene = scene;
         this.bongMen = [];
-        this.maxBongMen = 15;
+        this.maxBongMen = 8;
         this.spawnCooldown = 0;
         this.spawnInterval = 3;
     }

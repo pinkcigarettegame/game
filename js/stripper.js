@@ -259,7 +259,7 @@ class Stripper {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;
@@ -528,7 +528,7 @@ class Stripper {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const t = ctx.currentTime;

@@ -72,7 +72,7 @@ class Chunk {
             // Use ±192 blocks, step 8 for maximum smoothness (fewer cliff-like jumps)
             let sumH = 0;
             let count = 0;
-            for (let s = -192; s <= 192; s += 8) {
+            for (let s = -192; s <= 192; s += 16) {
                 let sx, sz;
                 if (onZRoad || nearZRoad) {
                     sx = wx + s;
@@ -719,7 +719,7 @@ class World {
 
         let sumH = 0;
         let count = 0;
-        for (let s = -192; s <= 192; s += 8) {
+        for (let s = -192; s <= 192; s += 16) {
             let sx, sz;
             if (!isZAligned) {
                 sx = wx + s;
@@ -774,12 +774,18 @@ class World {
 
     // Animate water textures (UV scrolling for wave effect)
     animateWater(dt) {
+        // Throttle water animation to ~15fps for performance
+        this._waterAnimAccum = (this._waterAnimAccum || 0) + dt;
+        if (this._waterAnimAccum < 0.066) return;
+        const waterDt = this._waterAnimAccum;
+        this._waterAnimAccum = 0;
+
         const waterMats = this.blockTextures.materials[BlockType.WATER];
         if (waterMats) {
             for (const mat of waterMats) {
                 if (mat.map) {
-                    mat.map.offset.x += dt * 0.08;
-                    mat.map.offset.y += dt * 0.04;
+                    mat.map.offset.x += waterDt * 0.08;
+                    mat.map.offset.y += waterDt * 0.04;
                     // Keep offsets in 0-1 range
                     mat.map.offset.x %= 1;
                     mat.map.offset.y %= 1;

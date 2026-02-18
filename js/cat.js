@@ -118,7 +118,7 @@ class CatEnemy {
 
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const now = ctx.currentTime;
@@ -173,7 +173,7 @@ class CatEnemy {
     playExplosion() {
         try {
             if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.audioCtx = window.getSharedAudioCtx ? window.getSharedAudioCtx() : new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = this.audioCtx;
             const now = ctx.currentTime;
@@ -687,7 +687,7 @@ class CatSpawner {
         this.scene = scene;
         this.player = player;
         this.cats = [];
-        this.maxCats = 15;
+        this.maxCats = 10;
         this.spawnCooldown = 0;
         this.spawnInterval = 5; // seconds between spawn attempts
     }

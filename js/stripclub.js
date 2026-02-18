@@ -14,11 +14,16 @@ class StripClub {
         this.glowPhase = Math.random() * Math.PI * 2;
         this.neonObjects = [];
         this.stripperScore = 0; // Number of strippers deposited
+        this.floors = 1; // Start with 1 floor
+        this.maxFloors = 10;
+        this.incomeTimer = 0; // Timer for $1/sec per hooker
+        this.totalEarned = 0; // Total money earned from this club
 
         // Building dimensions (slightly bigger than liquor store)
         this.width = 12;
         this.depth = 10;
         this.wallHeight = 7;
+        this.floorHeight = 4; // Height per additional floor
 
         this.roadEdgeHeight = this.calculateRoadEdgeHeight();
         this.clearArea();
@@ -141,16 +146,16 @@ class StripClub {
     }
 
     createBuilding() {
-        // Floor
-        const floorGeo = new THREE.BoxGeometry(this.width, 0.3, this.depth);
-        const floorMat = new THREE.MeshLambertMaterial({ color: 0x1a0a1a });
+        // === GLOSSY BLACK FLOOR ===
+        const floorGeo = new THREE.BoxGeometry(this.width + 2, 0.3, this.depth + 2);
+        const floorMat = new THREE.MeshLambertMaterial({ color: 0x050510 });
         const floor = new THREE.Mesh(floorGeo, floorMat);
         floor.position.set(0, 0.15, 0);
         this.group.add(floor);
 
-        // Walls (dark pink/purple)
-        const wallMat = new THREE.MeshLambertMaterial({ color: 0x2a0a2e });
-        const wallThickness = 0.4;
+        // === WALLS - JET BLACK with purple tint ===
+        const wallMat = new THREE.MeshLambertMaterial({ color: 0x0a0515 });
+        const wallThickness = 0.5;
 
         // Back wall
         const backWallGeo = new THREE.BoxGeometry(this.width, this.wallHeight, wallThickness);
@@ -167,7 +172,7 @@ class StripClub {
         rightWall.position.set(this.width / 2 - wallThickness / 2, this.wallHeight / 2, 0);
         this.group.add(rightWall);
 
-        // Front wall sections
+        // Front wall sections (wider solid sections)
         const frontLeftGeo = new THREE.BoxGeometry(3.5, this.wallHeight, wallThickness);
         const frontLeft = new THREE.Mesh(frontLeftGeo, wallMat);
         frontLeft.position.set(-this.width / 2 + 1.75, this.wallHeight / 2, this.depth / 2 - wallThickness / 2);
@@ -180,52 +185,150 @@ class StripClub {
         aboveDoor.position.set(0, this.wallHeight - 1.25, this.depth / 2 - wallThickness / 2);
         this.group.add(aboveDoor);
 
-        // Door frame (hot pink)
-        const frameMat = new THREE.MeshLambertMaterial({ color: 0xff1493 });
-        const frameVertGeo = new THREE.BoxGeometry(0.2, 4.5, 0.5);
-        const leftFrame = new THREE.Mesh(frameVertGeo, frameMat);
-        leftFrame.position.set(-2.5, 2.25, this.depth / 2 - 0.1);
-        this.group.add(leftFrame);
-        const rightFrame = new THREE.Mesh(frameVertGeo, frameMat);
-        rightFrame.position.set(2.5, 2.25, this.depth / 2 - 0.1);
-        this.group.add(rightFrame);
-        const frameTopGeo = new THREE.BoxGeometry(5.2, 0.2, 0.5);
-        const topFrame = new THREE.Mesh(frameTopGeo, frameMat);
-        topFrame.position.set(0, 4.5, this.depth / 2 - 0.1);
-        this.group.add(topFrame);
+        // === GRAND ENTRANCE - Neon archway ===
+        const archMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.9 });
+        // Left arch pillar
+        const archPillarGeo = new THREE.BoxGeometry(0.3, 5, 0.6);
+        const archL = new THREE.Mesh(archPillarGeo, archMat);
+        archL.position.set(-2.6, 2.5, this.depth / 2 + 0.1);
+        this.group.add(archL);
+        this.neonObjects.push(archL);
+        // Right arch pillar
+        const archR = new THREE.Mesh(archPillarGeo, archMat);
+        archR.position.set(2.6, 2.5, this.depth / 2 + 0.1);
+        this.group.add(archR);
+        this.neonObjects.push(archR);
+        // Arch top
+        const archTopGeo = new THREE.BoxGeometry(5.5, 0.3, 0.6);
+        const archTop = new THREE.Mesh(archTopGeo, archMat);
+        archTop.position.set(0, 5.0, this.depth / 2 + 0.1);
+        this.group.add(archTop);
+        this.neonObjects.push(archTop);
 
-        // Roof
-        const roofGeo = new THREE.BoxGeometry(this.width + 1, 0.4, this.depth + 1);
-        const roofMat = new THREE.MeshLambertMaterial({ color: 0x0d0d1a });
+        // === VELVET ROPE & BOUNCER ===
+        // Rope posts (gold)
+        const goldPostMat = new THREE.MeshBasicMaterial({ color: 0xffd700 });
+        const postGeo = new THREE.BoxGeometry(0.15, 1.2, 0.15);
+        const postL = new THREE.Mesh(postGeo, goldPostMat);
+        postL.position.set(-3.5, 0.6, this.depth / 2 + 1.5);
+        this.group.add(postL);
+        const postR = new THREE.Mesh(postGeo, goldPostMat);
+        postR.position.set(-1.5, 0.6, this.depth / 2 + 1.5);
+        this.group.add(postR);
+        // Velvet rope (red)
+        const ropeMat = new THREE.MeshBasicMaterial({ color: 0xcc0033 });
+        const ropeGeo = new THREE.BoxGeometry(2.0, 0.08, 0.08);
+        const rope = new THREE.Mesh(ropeGeo, ropeMat);
+        rope.position.set(-2.5, 0.9, this.depth / 2 + 1.5);
+        this.group.add(rope);
+
+        // Bouncer (big blocky dude in black)
+        const bouncerGroup = new THREE.Group();
+        bouncerGroup.position.set(3.5, 0, this.depth / 2 + 1.5);
+        // Bouncer body
+        const bouncerBodyGeo = new THREE.BoxGeometry(0.6, 1.0, 0.4);
+        const bouncerBodyMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const bouncerBody = new THREE.Mesh(bouncerBodyGeo, bouncerBodyMat);
+        bouncerBody.position.set(0, 1.2, 0);
+        bouncerGroup.add(bouncerBody);
+        // Bouncer head
+        const bouncerHeadGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        const bouncerHeadMat = new THREE.MeshLambertMaterial({ color: 0x8b6914 });
+        const bouncerHead = new THREE.Mesh(bouncerHeadGeo, bouncerHeadMat);
+        bouncerHead.position.set(0, 1.9, 0);
+        bouncerGroup.add(bouncerHead);
+        // Bouncer sunglasses
+        const glassGeo = new THREE.BoxGeometry(0.28, 0.08, 0.05);
+        const glassMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+        const glasses = new THREE.Mesh(glassGeo, glassMat);
+        glasses.position.set(0, 1.92, 0.16);
+        bouncerGroup.add(glasses);
+        // Bouncer legs
+        const bLegGeo = new THREE.BoxGeometry(0.2, 0.6, 0.2);
+        const bLegL = new THREE.Mesh(bLegGeo, bouncerBodyMat);
+        bLegL.position.set(-0.15, 0.4, 0);
+        bouncerGroup.add(bLegL);
+        const bLegR = new THREE.Mesh(bLegGeo, bouncerBodyMat);
+        bLegR.position.set(0.15, 0.4, 0);
+        bouncerGroup.add(bLegR);
+        // Bouncer arms (crossed)
+        const bArmGeo = new THREE.BoxGeometry(0.15, 0.5, 0.15);
+        const bArmL = new THREE.Mesh(bArmGeo, bouncerBodyMat);
+        bArmL.position.set(-0.35, 1.15, 0.1);
+        bArmL.rotation.z = 0.4;
+        bouncerGroup.add(bArmL);
+        const bArmR = new THREE.Mesh(bArmGeo, bouncerBodyMat);
+        bArmR.position.set(0.35, 1.15, 0.1);
+        bArmR.rotation.z = -0.4;
+        bouncerGroup.add(bArmR);
+        this.group.add(bouncerGroup);
+
+        // === ROOF - Flat black with raised parapet ===
+        const roofGeo = new THREE.BoxGeometry(this.width + 1.5, 0.4, this.depth + 1.5);
+        const roofMat = new THREE.MeshLambertMaterial({ color: 0x050510 });
         const roof = new THREE.Mesh(roofGeo, roofMat);
         roof.position.set(0, this.wallHeight + 0.2, 0);
         this.group.add(roof);
 
-        // Neon edge strips (hot pink)
-        const neonStripMat = new THREE.MeshBasicMaterial({ color: 0xff1493, transparent: true, opacity: 0.9 });
-        const neonFrontGeo = new THREE.BoxGeometry(this.width + 1.2, 0.15, 0.15);
+        // Parapet walls (raised edge around roof)
+        const parapetMat = new THREE.MeshLambertMaterial({ color: 0x0a0515 });
+        const parapetH = 1.0;
+        const parapetFrontGeo = new THREE.BoxGeometry(this.width + 1.5, parapetH, 0.3);
+        const parapetFront = new THREE.Mesh(parapetFrontGeo, parapetMat);
+        parapetFront.position.set(0, this.wallHeight + 0.4 + parapetH / 2, this.depth / 2 + 0.6);
+        this.group.add(parapetFront);
+        const parapetBack = new THREE.Mesh(parapetFrontGeo, parapetMat);
+        parapetBack.position.set(0, this.wallHeight + 0.4 + parapetH / 2, -this.depth / 2 - 0.6);
+        this.group.add(parapetBack);
+        const parapetSideGeo = new THREE.BoxGeometry(0.3, parapetH, this.depth + 1.5);
+        const parapetL = new THREE.Mesh(parapetSideGeo, parapetMat);
+        parapetL.position.set(-this.width / 2 - 0.6, this.wallHeight + 0.4 + parapetH / 2, 0);
+        this.group.add(parapetL);
+        const parapetR = new THREE.Mesh(parapetSideGeo, parapetMat);
+        parapetR.position.set(this.width / 2 + 0.6, this.wallHeight + 0.4 + parapetH / 2, 0);
+        this.group.add(parapetR);
+
+        // === NEON EDGE STRIPS - Multiple colors ===
+        // Hot pink top edge
+        const neonStripMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.9 });
+        const neonFrontGeo = new THREE.BoxGeometry(this.width + 1.8, 0.2, 0.2);
         const neonFront = new THREE.Mesh(neonFrontGeo, neonStripMat);
-        neonFront.position.set(0, this.wallHeight + 0.45, this.depth / 2 + 0.5);
+        neonFront.position.set(0, this.wallHeight + 0.5, this.depth / 2 + 0.7);
         this.group.add(neonFront);
         this.neonObjects.push(neonFront);
 
-        const neonSideGeo = new THREE.BoxGeometry(0.15, 0.15, this.depth + 1.2);
+        // Purple mid-strip
+        const purpleNeonMat = new THREE.MeshBasicMaterial({ color: 0xaa00ff, transparent: true, opacity: 0.8 });
+        const purpleStripGeo = new THREE.BoxGeometry(this.width + 0.5, 0.12, 0.12);
+        const purpleStrip = new THREE.Mesh(purpleStripGeo, purpleNeonMat);
+        purpleStrip.position.set(0, this.wallHeight * 0.6, this.depth / 2 + 0.05);
+        this.group.add(purpleStrip);
+        this.neonObjects.push(purpleStrip);
+
+        // Neon side strips
+        const neonSideGeo = new THREE.BoxGeometry(0.2, 0.2, this.depth + 1.8);
         const neonLeft = new THREE.Mesh(neonSideGeo, neonStripMat);
-        neonLeft.position.set(-this.width / 2 - 0.5, this.wallHeight + 0.45, 0);
+        neonLeft.position.set(-this.width / 2 - 0.7, this.wallHeight + 0.5, 0);
         this.group.add(neonLeft);
         this.neonObjects.push(neonLeft);
         const neonRight = new THREE.Mesh(neonSideGeo, neonStripMat);
-        neonRight.position.set(this.width / 2 + 0.5, this.wallHeight + 0.45, 0);
+        neonRight.position.set(this.width / 2 + 0.7, this.wallHeight + 0.5, 0);
         this.group.add(neonRight);
         this.neonObjects.push(neonRight);
-        const neonBack = new THREE.Mesh(neonFrontGeo, neonStripMat);
-        neonBack.position.set(0, this.wallHeight + 0.45, -this.depth / 2 - 0.5);
-        this.group.add(neonBack);
-        this.neonObjects.push(neonBack);
 
-        // Corner pillars (pink)
-        const pillarGeo = new THREE.BoxGeometry(0.5, this.wallHeight + 0.5, 0.5);
-        const pillarMat = new THREE.MeshLambertMaterial({ color: 0xcc1177 });
+        // === GROUND NEON STRIPS (leading to entrance) ===
+        const groundNeonMat = new THREE.MeshBasicMaterial({ color: 0xff1493, transparent: true, opacity: 0.7 });
+        for (let i = 0; i < 4; i++) {
+            const gNeonGeo = new THREE.BoxGeometry(5.5, 0.05, 0.15);
+            const gNeon = new THREE.Mesh(gNeonGeo, groundNeonMat);
+            gNeon.position.set(0, 0.32, this.depth / 2 + 0.8 + i * 0.6);
+            this.group.add(gNeon);
+            this.neonObjects.push(gNeon);
+        }
+
+        // === CORNER PILLARS - Taller, with neon caps ===
+        const pillarGeo = new THREE.BoxGeometry(0.6, this.wallHeight + 1.5, 0.6);
+        const pillarMat = new THREE.MeshLambertMaterial({ color: 0x0a0515 });
         const corners = [
             [-this.width / 2, 0, -this.depth / 2],
             [this.width / 2, 0, -this.depth / 2],
@@ -234,16 +337,43 @@ class StripClub {
         ];
         for (const c of corners) {
             const pillar = new THREE.Mesh(pillarGeo, pillarMat);
-            pillar.position.set(c[0], (this.wallHeight + 0.5) / 2, c[2]);
+            pillar.position.set(c[0], (this.wallHeight + 1.5) / 2, c[2]);
             this.group.add(pillar);
+            // Neon cap on each pillar
+            const capGeo = new THREE.BoxGeometry(0.8, 0.3, 0.8);
+            const capMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.85 });
+            const cap = new THREE.Mesh(capGeo, capMat);
+            cap.position.set(c[0], this.wallHeight + 1.5, c[2]);
+            this.group.add(cap);
+            this.neonObjects.push(cap);
         }
 
-        // Front step
-        const stepGeo = new THREE.BoxGeometry(6, 0.2, 1);
-        const stepMat = new THREE.MeshLambertMaterial({ color: 0x333344 });
+        // === FRONT STEPS (wider, with red carpet) ===
+        const stepGeo = new THREE.BoxGeometry(6, 0.2, 1.5);
+        const stepMat = new THREE.MeshLambertMaterial({ color: 0x1a1a2a });
         const step = new THREE.Mesh(stepGeo, stepMat);
-        step.position.set(0, 0.1, this.depth / 2 + 0.5);
+        step.position.set(0, 0.1, this.depth / 2 + 0.75);
         this.group.add(step);
+        // Red carpet
+        const carpetGeo = new THREE.BoxGeometry(3, 0.22, 3);
+        const carpetMat = new THREE.MeshLambertMaterial({ color: 0x880022 });
+        const carpet = new THREE.Mesh(carpetGeo, carpetMat);
+        carpet.position.set(0, 0.11, this.depth / 2 + 1.5);
+        this.group.add(carpet);
+
+        // === AWNING / CANOPY over entrance ===
+        const awningGeo = new THREE.BoxGeometry(7, 0.15, 3);
+        const awningMat = new THREE.MeshLambertMaterial({ color: 0x1a0020 });
+        const awning = new THREE.Mesh(awningGeo, awningMat);
+        awning.position.set(0, 5.2, this.depth / 2 + 1.5);
+        this.group.add(awning);
+        // Awning underside neon
+        const awningNeonGeo = new THREE.BoxGeometry(6.5, 0.08, 2.5);
+        const awningNeonMat = new THREE.MeshBasicMaterial({ color: 0xff1493, transparent: true, opacity: 0.6 });
+        const awningNeon = new THREE.Mesh(awningNeonGeo, awningNeonMat);
+        awningNeon.position.set(0, 5.1, this.depth / 2 + 1.5);
+        this.group.add(awningNeon);
+        this.neonObjects.push(awningNeon);
     }
 
     createSigns() {
@@ -405,12 +535,12 @@ class StripClub {
         ctx.strokeStyle = '#ff1493';
         ctx.lineWidth = 2;
         ctx.strokeRect(2, 2, 124, 28);
-        ctx.font = 'bold 16px monospace';
+        ctx.font = 'bold 12px monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffd700';
         ctx.shadowColor = '#ffd700';
         ctx.shadowBlur = 4;
-        ctx.fillText('💃 ' + this.stripperScore + ' STRIPPERS', 64, 22);
+        ctx.fillText('💃' + this.stripperScore + ' | F' + this.floors + ' | $' + this.getIncomePerSecond() + '/s', 64, 22);
         if (this.scoreTexture) this.scoreTexture.needsUpdate = true;
     }
 
@@ -419,12 +549,111 @@ class StripClub {
         this.updateScoreDisplay();
     }
 
+    // Get income per second: $1 per hooker per floor
+    getIncomePerSecond() {
+        return this.stripperScore * this.floors;
+    }
+
+    // Get cost to add next floor (exponential: $5000 * 3^(floors-1))
+    getFloorUpgradeCost() {
+        if (this.floors >= this.maxFloors) return Infinity;
+        return Math.floor(5000 * Math.pow(3, this.floors - 1));
+    }
+
+    // Add a floor visually and logically
+    addFloor() {
+        if (this.floors >= this.maxFloors) return false;
+        this.floors++;
+
+        // Add visual floor on top of building
+        const floorY = this.wallHeight + (this.floors - 1) * this.floorHeight;
+        const wallMat = new THREE.MeshLambertMaterial({ color: 0x0a0515 });
+        const wallThickness = 0.5;
+
+        // Floor slab
+        const slabGeo = new THREE.BoxGeometry(this.width + 0.5, 0.3, this.depth + 0.5);
+        const slabMat = new THREE.MeshLambertMaterial({ color: 0x050510 });
+        const slab = new THREE.Mesh(slabGeo, slabMat);
+        slab.position.set(0, floorY, 0);
+        this.group.add(slab);
+
+        // Walls for new floor
+        const fh = this.floorHeight;
+        // Back wall
+        const bwGeo = new THREE.BoxGeometry(this.width, fh, wallThickness);
+        const bw = new THREE.Mesh(bwGeo, wallMat);
+        bw.position.set(0, floorY + fh / 2, -this.depth / 2 + wallThickness / 2);
+        this.group.add(bw);
+        // Side walls
+        const swGeo = new THREE.BoxGeometry(wallThickness, fh, this.depth);
+        const lw = new THREE.Mesh(swGeo, wallMat);
+        lw.position.set(-this.width / 2 + wallThickness / 2, floorY + fh / 2, 0);
+        this.group.add(lw);
+        const rw = new THREE.Mesh(swGeo, wallMat);
+        rw.position.set(this.width / 2 - wallThickness / 2, floorY + fh / 2, 0);
+        this.group.add(rw);
+        // Front wall
+        const fwGeo = new THREE.BoxGeometry(this.width, fh, wallThickness);
+        const fw = new THREE.Mesh(fwGeo, wallMat);
+        fw.position.set(0, floorY + fh / 2, this.depth / 2 - wallThickness / 2);
+        this.group.add(fw);
+
+        // Windows on front (purple glow)
+        const windowMat = new THREE.MeshBasicMaterial({ color: 0xaa00ff, transparent: true, opacity: 0.6 });
+        const numWindows = 4;
+        const windowSpacing = this.width / (numWindows + 1);
+        for (let i = 1; i <= numWindows; i++) {
+            const winGeo = new THREE.BoxGeometry(1.2, 1.5, 0.1);
+            const win = new THREE.Mesh(winGeo, windowMat);
+            win.position.set(-this.width / 2 + i * windowSpacing, floorY + fh / 2, this.depth / 2);
+            this.group.add(win);
+            this.neonObjects.push(win);
+        }
+
+        // Neon strip around new floor
+        const neonMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.85 });
+        const nfGeo = new THREE.BoxGeometry(this.width + 1, 0.15, 0.15);
+        const nf = new THREE.Mesh(nfGeo, neonMat);
+        nf.position.set(0, floorY + fh, this.depth / 2 + 0.3);
+        this.group.add(nf);
+        this.neonObjects.push(nf);
+
+        // New roof on top
+        const roofGeo = new THREE.BoxGeometry(this.width + 1.5, 0.4, this.depth + 1.5);
+        const roofMat = new THREE.MeshLambertMaterial({ color: 0x050510 });
+        const roof = new THREE.Mesh(roofGeo, roofMat);
+        roof.position.set(0, floorY + fh + 0.2, 0);
+        this.group.add(roof);
+
+        // Interior light for new floor
+        const light = new THREE.PointLight(0xff1493, 0.8, 12);
+        light.position.set(0, floorY + fh - 1, 0);
+        this.group.add(light);
+        this.neonObjects.push(light);
+
+        this.updateScoreDisplay();
+        return true;
+    }
+
+    // Generate income - returns money earned this tick
+    generateIncome(dt) {
+        if (this.stripperScore <= 0) return 0;
+        this.incomeTimer += dt;
+        let earned = 0;
+        while (this.incomeTimer >= 1.0) {
+            this.incomeTimer -= 1.0;
+            earned += this.getIncomePerSecond();
+        }
+        this.totalEarned += earned;
+        return earned;
+    }
+
     update(dt, playerPos) {
         if (!this.alive) return;
         const dist = this.position.distanceTo(playerPos);
-        if (dist > 60) return;
+        if (dist > 80) return;
 
-        this.glowPhase += dt * 4; // Faster pulse than liquor store
+        this.glowPhase += dt * 4;
         const pulse = 0.5 + Math.sin(this.glowPhase) * 0.5;
         const pulse2 = 0.5 + Math.sin(this.glowPhase * 1.5 + 1) * 0.5;
         for (const obj of this.neonObjects) {
@@ -453,29 +682,26 @@ class StripClub {
     }
 }
 
-// Strip Club Manager - tracks all strip clubs
+// Strip Club Manager - tracks purchased strip clubs only (no auto-spawn)
 class StripClubManager {
     constructor(world, scene) {
         this.world = world;
         this.scene = scene;
         this.clubs = [];
+        this.glock = null; // Reference to glock for adding income
     }
 
     spawnClubNearStore(store) {
-        // Spawn the strip club on the opposite side of the road from the store
-        // or offset along the road
         const BUILDING_SETBACK = 15;
-        const offset = 30; // 30 blocks along the road from the store
+        const offset = 30;
 
         const cosR = Math.cos(store.rotation);
         const sinR = Math.sin(store.rotation);
 
-        // Place it offset along the road (perpendicular to store facing direction)
         const clubX = store.position.x + Math.round(offset * cosR);
         const clubZ = store.position.z - Math.round(offset * sinR);
         const clubRot = store.rotation;
 
-        // Get road height
         const roadEdgeLocalZ = 10;
         const roadEdgeWX = Math.floor(clubX) + Math.round(roadEdgeLocalZ * Math.sin(clubRot));
         const roadEdgeWZ = Math.floor(clubZ) + Math.round(roadEdgeLocalZ * Math.cos(clubRot));
@@ -488,7 +714,6 @@ class StripClubManager {
             sy = this.world.getSpawnHeight(clubX, clubZ);
         }
 
-        // Make sure terrain is loaded
         this.world.update(clubX, clubZ);
 
         const club = new StripClub(this.scene, this.world, clubX, sy, clubZ, clubRot);
@@ -496,9 +721,42 @@ class StripClubManager {
         return club;
     }
 
+    // Find nearest club within range for upgrades/deposits
+    getNearestClub(playerPos, maxDist) {
+        maxDist = maxDist || 15;
+        let nearest = null;
+        let nearestDist = maxDist;
+        for (const club of this.clubs) {
+            if (!club.alive) continue;
+            const dist = club.position.distanceTo(playerPos);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearest = club;
+            }
+        }
+        return nearest;
+    }
+
+    // Get total income per second across all clubs
+    getTotalIncomePerSecond() {
+        let total = 0;
+        for (const club of this.clubs) {
+            total += club.getIncomePerSecond();
+        }
+        return total;
+    }
+
     update(dt, playerPos) {
+        // Generate income from all clubs and add to player money
+        let totalIncome = 0;
         for (const club of this.clubs) {
             club.update(dt, playerPos);
+            totalIncome += club.generateIncome(dt);
+        }
+
+        // Add income to player's money
+        if (totalIncome > 0 && this.glock) {
+            this.glock.money += totalIncome;
         }
     }
 
