@@ -257,8 +257,8 @@ class MissionSystem {
         this._saveTimer = 0;
         this._saveInterval = 3; // Save at most every 3 seconds
 
-        // Load saved progress
-        this.loadProgress();
+        // Always start fresh on page load - no loading saved progress
+        // (missions reset on death and on refresh)
 
         // Cached DOM refs
         this._trackerEl = null;
