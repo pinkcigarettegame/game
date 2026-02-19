@@ -4,7 +4,7 @@
 
     // Game state
     let scene, camera, renderer;
-    let world, player, input, ui, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner;
+    let world, player, input, ui, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner, crocodileSpawner;
     let healthPotionSpawner;
     let liquorStoreSpawner;
     let billboardSpawner;
@@ -27,6 +27,12 @@
     let bKeyWasDown = false;
     let fKeyWasDown = false;
     let bDepositKeyWasDown = false;
+    let tKeyWasDown = false; // "Do the helicopter" dance key
+    let helicopterDanceActive = false;
+    let helicopterDanceTimer = 0;
+    let helicopterDanceDuration = 3.0; // seconds of spinning
+    let helicopterDanceSpinAngle = 0;
+    let helicopterDanceCamAngle = 0;
     let shopMenuOpen = false;
     let drivingMode = false;
     let moneySpreadMode = false; // Third-person money spread on foot
@@ -162,10 +168,11 @@
         stripperSpawner = new StripperSpawner(world, scene);
         crackheadSpawner = new CrackheadSpawner(world, scene, player);
         copSpawner = new CopSpawner(world, scene, player);
+        crocodileSpawner = new CrocodileSpawner(world, scene, player);
         // Add camera to scene so child objects (gun) render
         scene.add(camera);
         glock = new Glock(scene, camera, player);
-        glock.setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner);
+        glock.setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner, crocodileSpawner);
 
         // Spawn health potion system (Mango Cart Ale pickups)
         healthPotionSpawner = new HealthPotionSpawner(world, scene);
@@ -704,6 +711,7 @@
             if (stripperSpawner) stripperSpawner.update(dt, challenger.position);
             if (crackheadSpawner) crackheadSpawner.update(dt, challenger.position);
             if (copSpawner) copSpawner.update(dt, challenger.position);
+            if (crocodileSpawner) crocodileSpawner.update(dt, challenger.position);
             ui.update(dt, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, glock);
             if (glock) glock.update(dt);
             
@@ -758,6 +766,7 @@
             if (stripperSpawner) stripperSpawner.update(dt, player.position);
             if (crackheadSpawner) crackheadSpawner.update(dt, player.position);
             if (copSpawner) copSpawner.update(dt, player.position);
+            if (crocodileSpawner) crocodileSpawner.update(dt, player.position);
             ui.update(dt, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, glock);
             if (glock) glock.update(dt);
             if (healthPotionSpawner) healthPotionSpawner.update(dt, player.position);
@@ -793,6 +802,25 @@
             }
             rKeyWasDown = rKeyDown;
 
+            // T key: "Do the helicopter" dance - the ONLY way to get rid of the police helicopter!
+            const tKeyDown = input.keys['KeyT'];
+            if (tKeyDown && !tKeyWasDown && !helicopterDanceActive && !player.moneySpreadActive && !shopMenuOpen) {
+                if (copSpawner && copSpawner.helicopter && copSpawner.helicopter.alive && !copSpawner.helicopter.stolen) {
+                    startHelicopterDance();
+                } else if (!copSpawner || !copSpawner.helicopter) {
+                    // No helicopter - show message
+                    const brokeMsg = document.getElementById('broke-message');
+                    if (brokeMsg) {
+                        brokeMsg.textContent = '🚁 No helicopter to get rid of! 🚁';
+                        brokeMsg.classList.remove('active'); brokeMsg.style.display = 'none';
+                        void brokeMsg.offsetWidth;
+                        brokeMsg.style.display = 'block'; brokeMsg.classList.add('active');
+                        setTimeout(() => { brokeMsg.classList.remove('active'); brokeMsg.style.display = 'none'; }, 2000);
+                    }
+                }
+            }
+            tKeyWasDown = !!tKeyDown;
+
             // If glock is equipped, left click shoots instead of breaking blocks
             if (glock && glock.equipped) {
                 if (input.mouseLeft) {
@@ -819,6 +847,7 @@
             if (stripperSpawner) stripperSpawner.update(dt, player.position);
             if (crackheadSpawner) crackheadSpawner.update(dt, player.position);
             if (copSpawner) copSpawner.update(dt, player.position);
+            if (crocodileSpawner) crocodileSpawner.update(dt, player.position);
             ui.update(dt, catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, glock);
             if (glock) glock.update(dt);
 
@@ -3641,6 +3670,217 @@
         }
         
         return clamped;
+    }
+
+    // === "DO THE HELICOPTER" DANCE - Only way to get rid of the police helicopter! ===
+    function startHelicopterDance() {
+        if (helicopterDanceActive || !copSpawner || !copSpawner.helicopter) return;
+        helicopterDanceActive = true;
+        helicopterDanceTimer = 0;
+        helicopterDanceSpinAngle = player.rotation.y;
+        helicopterDanceCamAngle = player.rotation.y + Math.PI;
+
+        // Show character model for third person
+        player.characterMesh.visible = true;
+        player.characterMesh.position.set(
+            player.position.x,
+            player.position.y - player.fullHeight,
+            player.position.z
+        );
+        player.characterMesh.rotation.y = player.rotation.y;
+
+        // Hide glock and highlight
+        if (glock && glock.equipped) glock.gunGroup.visible = false;
+        if (player.highlightMesh) player.highlightMesh.visible = false;
+
+        // Show epic title
+        const titleDiv = document.createElement('div');
+        titleDiv.id = 'heli-dance-title';
+        titleDiv.style.cssText = 'position:fixed;top:20%;left:50%;transform:translate(-50%,-50%) scale(0.5);z-index:550;pointer-events:none;' +
+            'font-family:"Impact",sans-serif;font-size:56px;color:#44ffff;text-shadow:0 0 30px #44ffff,0 0 60px #0088ff,0 0 90px #0044ff,2px 2px 0 #000;' +
+            'letter-spacing:4px;opacity:0;transition:all 0.4s cubic-bezier(0.2,1,0.3,1);text-align:center;white-space:nowrap;';
+        titleDiv.textContent = '🚁 DOING THE HELICOPTER 🚁';
+        document.body.appendChild(titleDiv);
+        setTimeout(() => { titleDiv.style.opacity = '1'; titleDiv.style.transform = 'translate(-50%,-50%) scale(1)'; }, 50);
+
+        // Play helicopter dance sound
+        playHelicopterDanceSound();
+
+        // Animate the dance
+        const heli = copSpawner.helicopter;
+        const danceUpdate = () => {
+            if (!helicopterDanceActive) return;
+            const dt = 0.016;
+            helicopterDanceTimer += dt;
+            const t = helicopterDanceTimer;
+            const progress = t / helicopterDanceDuration;
+
+            // Spin the character FAST (helicopter spin!)
+            helicopterDanceSpinAngle += dt * 12; // Very fast spin
+            player.characterMesh.rotation.y = helicopterDanceSpinAngle;
+            player.characterMesh.position.set(
+                player.position.x,
+                player.position.y - player.fullHeight,
+                player.position.z
+            );
+
+            // Arms spread out like helicopter blades
+            if (player._leftArm && player._rightArm) {
+                const armSpread = Math.min(1, t * 5);
+                player._leftArm.rotation.z = armSpread * 1.5;
+                player._leftArm.position.set(-0.32 - armSpread * 0.2, 0.88 + armSpread * 0.3, 0);
+                player._rightArm.rotation.z = -(armSpread * 1.5);
+                player._rightArm.position.set(0.32 + armSpread * 0.2, 0.88 + armSpread * 0.3, 0);
+                if (player._leftHand && player._rightHand) {
+                    player._leftHand.position.set(-0.32 - armSpread * 0.4, 0.58 + armSpread * 0.55, 0);
+                    player._rightHand.position.set(0.32 + armSpread * 0.4, 0.58 + armSpread * 0.55, 0);
+                }
+            }
+
+            // Third-person camera orbits
+            helicopterDanceCamAngle += dt * 1.2;
+            const camDist = 6;
+            const camHeight = 3;
+            camera.position.set(
+                player.position.x + Math.sin(helicopterDanceCamAngle) * camDist,
+                player.position.y + camHeight,
+                player.position.z + Math.cos(helicopterDanceCamAngle) * camDist
+            );
+            camera.lookAt(player.position.x, player.position.y - 0.5, player.position.z);
+
+            // Make the helicopter spin out of control and fly away!
+            if (heli && heli.alive) {
+                // Helicopter starts spinning and ascending rapidly
+                const heliProgress = Math.min(1, t / (helicopterDanceDuration * 0.8));
+                heli.velocity.y = 5 + heliProgress * 25; // Fly up fast
+                // Spin the helicopter mesh wildly
+                if (heli.mesh) {
+                    heli.mesh.rotation.z += dt * heliProgress * 8;
+                    heli.mesh.rotation.x += dt * heliProgress * 3;
+                }
+                // Move it away
+                const awayAngle = Math.atan2(
+                    heli.position.x - player.position.x,
+                    heli.position.z - player.position.z
+                );
+                heli.position.x += Math.sin(awayAngle) * heliProgress * 15 * dt;
+                heli.position.z += Math.cos(awayAngle) * heliProgress * 15 * dt;
+                heli.position.y += heli.velocity.y * dt;
+                if (heli.mesh) heli.mesh.position.copy(heli.position);
+            }
+
+            // End the dance
+            if (t >= helicopterDanceDuration) {
+                endHelicopterDance(heli, titleDiv);
+                return;
+            }
+
+            requestAnimationFrame(danceUpdate);
+        };
+        requestAnimationFrame(danceUpdate);
+    }
+
+    function endHelicopterDance(heli, titleDiv) {
+        helicopterDanceActive = false;
+
+        // Destroy the helicopter
+        if (heli && copSpawner) {
+            heli.alive = false;
+            heli.dispose();
+            copSpawner.helicopter = null;
+            // Reduce wanted level as reward
+            if (copSpawner.wantedLevel > 0) {
+                copSpawner.wantedLevel = Math.max(0, copSpawner.wantedLevel - 3);
+            }
+        }
+
+        // Hide character model
+        player.characterMesh.visible = false;
+
+        // Reset arms
+        if (player._leftArm) { player._leftArm.rotation.z = 0; player._leftArm.position.set(-0.32, 0.88, 0); }
+        if (player._rightArm) { player._rightArm.rotation.z = 0; player._rightArm.position.set(0.32, 0.88, 0); }
+        if (player._leftHand) player._leftHand.position.set(-0.32, 0.58, 0);
+        if (player._rightHand) player._rightHand.position.set(0.32, 0.58, 0);
+
+        // Restore glock visibility
+        if (glock && glock.equipped) glock.gunGroup.visible = true;
+
+        // Restore first-person camera
+        camera.rotation.order = 'YXZ';
+        camera.fov = 75;
+        camera.updateProjectionMatrix();
+        player.updateCamera();
+
+        // Update title to show success
+        if (titleDiv) {
+            titleDiv.textContent = '🚁✅ HELICOPTER GONE! ⭐-3 🔥';
+            titleDiv.style.color = '#00ff88';
+            titleDiv.style.textShadow = '0 0 20px #00ff88,0 0 40px #00aa44,2px 2px 0 #000';
+            setTimeout(() => {
+                titleDiv.style.opacity = '0';
+                titleDiv.style.transform = 'translate(-50%,-50%) scale(1.5)';
+                setTimeout(() => titleDiv.remove(), 500);
+            }, 2000);
+        }
+
+        // Show success message
+        const inviteMsg = document.getElementById('invite-message');
+        if (inviteMsg) {
+            const msgs = [
+                '🚁💨 YOU DID THE HELICOPTER! Chopper is GONE! ⭐-3 🔥',
+                '🕺🚁 HELICOPTER DANCE! Police chopper retreated! ⭐-3 💪',
+                '🚁✅ THE HELICOPTER WORKED! They flew away! ⭐-3 😎'
+            ];
+            inviteMsg.textContent = msgs[Math.floor(Math.random() * msgs.length)];
+            inviteMsg.classList.remove('active'); inviteMsg.style.display = 'none';
+            void inviteMsg.offsetWidth;
+            inviteMsg.style.display = 'block'; inviteMsg.classList.add('active');
+            setTimeout(() => { inviteMsg.classList.remove('active'); inviteMsg.style.display = 'none'; }, 4000);
+        }
+    }
+
+    function playHelicopterDanceSound() {
+        try {
+            const ctx = getAudioCtx();
+            const t = ctx.currentTime;
+
+            // Whooshing helicopter blade sound (player spinning)
+            for (let i = 0; i < 6; i++) {
+                const osc = ctx.createOscillator();
+                osc.type = 'sawtooth';
+                const startTime = t + i * 0.5;
+                osc.frequency.setValueAtTime(80 + i * 20, startTime);
+                osc.frequency.linearRampToValueAtTime(120 + i * 30, startTime + 0.25);
+                osc.frequency.linearRampToValueAtTime(60 + i * 15, startTime + 0.5);
+                const g = ctx.createGain();
+                g.gain.setValueAtTime(0.08 + i * 0.02, startTime);
+                g.gain.linearRampToValueAtTime(0.04, startTime + 0.25);
+                g.gain.linearRampToValueAtTime(0.08 + i * 0.02, startTime + 0.5);
+                const lp = ctx.createBiquadFilter();
+                lp.type = 'lowpass';
+                lp.frequency.setValueAtTime(200 + i * 50, startTime);
+                osc.connect(lp); lp.connect(g); g.connect(ctx.destination);
+                osc.start(startTime); osc.stop(startTime + 0.55);
+            }
+
+            // Ascending victory chime at the end
+            setTimeout(() => {
+                const t2 = ctx.currentTime;
+                const notes = [523, 659, 784, 1047]; // C5, E5, G5, C6
+                for (let i = 0; i < notes.length; i++) {
+                    const osc = ctx.createOscillator();
+                    osc.type = 'sine';
+                    const offset = i * 0.12;
+                    osc.frequency.setValueAtTime(notes[i], t2 + offset);
+                    const g = ctx.createGain();
+                    g.gain.setValueAtTime(0.15, t2 + offset);
+                    g.gain.linearRampToValueAtTime(0, t2 + offset + 0.3);
+                    osc.connect(g); g.connect(ctx.destination);
+                    osc.start(t2 + offset); osc.stop(t2 + offset + 0.35);
+                }
+            }, 2500);
+        } catch(e) {}
     }
 
     function spawnChallenger() {

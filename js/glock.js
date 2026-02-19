@@ -139,8 +139,9 @@ class Glock {
         } catch(e) {}
     }
 
-    setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner) {
+    setTargets(catSpawner, bongManSpawner, stripperSpawner, crackheadSpawner, copSpawner, crocodileSpawner) {
         this.catSpawner = catSpawner;
+        this.crocodileSpawner = crocodileSpawner;
         this.bongManSpawner = bongManSpawner;
         this.stripperSpawner = stripperSpawner;
         this.crackheadSpawner = crackheadSpawner;
@@ -602,6 +603,34 @@ class Glock {
                         this.registerKill();
                     }
                     hitSomething = true;
+                }
+            }
+        }
+
+        // Check crocodiles
+        if (!hitSomething && this.crocodileSpawner && this.crocodileSpawner.crocodiles) {
+            for (let i = this.crocodileSpawner.crocodiles.length - 1; i >= 0; i--) {
+                const croc = this.crocodileSpawner.crocodiles[i];
+                if (!croc.alive) continue;
+                const hit = this.checkRayHit(origin, direction, croc.position, 0.8, 0.6);
+                if (hit) {
+                    croc.health -= this.damage;
+                    this.createHitEffect(hit);
+                    this.createBloodEffect(hit);
+                    if (croc.health <= 0) {
+                        croc.alive = false;
+                        const crocMoney = 5 + Math.floor(Math.random() * 6);
+                        for (let d = 0; d < 4; d++) {
+                            setTimeout(() => this.spawnDollarBill(), d * 80);
+                        }
+                        this.money += crocMoney;
+                        if (window.missionSystem) window.missionSystem.onMoneyEarned(crocMoney);
+                        croc.dispose();
+                        this.crocodileSpawner.crocodiles.splice(i, 1);
+                        this.registerKill();
+                    }
+                    hitSomething = true;
+                    break;
                 }
             }
         }

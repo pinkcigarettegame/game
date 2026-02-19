@@ -654,15 +654,9 @@ class CopSpawner {
             }
         }
 
-        // Despawn helicopter when wanted level drops below 5
-        if (this.wantedLevel < 5 && this.helicopter) {
-            // Let it fly away naturally (it stops chasing at < 5 stars and drifts up)
-            // Remove once it's far enough away or high enough
-            if (this.helicopter.position.y > 80 || this.helicopter.position.distanceTo(playerPos) > 200) {
-                this.helicopter.dispose();
-                this.helicopter = null;
-            }
-        }
+        // Helicopter persists until player "does the helicopter" dance!
+        // It does NOT despawn from wanted level decay - only the dance removes it.
+        // (The helicopter still stops chasing at < 5 stars but stays hovering/orbiting)
     }
 
     trySpawn(playerPos) {

@@ -522,14 +522,39 @@ class PoliceHelicopter {
                 this.createMuzzleFlash();
             }
         } else {
-            // Not at 5 stars - fly away / hover idle
-            this.velocity.x *= 0.98;
-            this.velocity.z *= 0.98;
-            // Slowly ascend and drift away
-            this.velocity.y += 2.0 * dt;
-            this.velocity.y *= 0.95;
+            // Not at 5 stars - helicopter stays! Hovers menacingly nearby
+            // Only "doing the helicopter" dance can get rid of it!
+            var targetX = playerPos.x + Math.cos(this.bobPhase * 0.2) * 15;
+            var targetZ = playerPos.z + Math.sin(this.bobPhase * 0.2) * 15;
+            var targetY = playerPos.y + this.hoverHeight + 5;
+
+            var dx2 = targetX - this.position.x;
+            var dz2 = targetZ - this.position.z;
+            var hd2 = Math.sqrt(dx2 * dx2 + dz2 * dz2);
+            if (hd2 > 2) {
+                var orbitSpeed = 8;
+                this.velocity.x += (dx2 / hd2) * orbitSpeed * dt;
+                this.velocity.z += (dz2 / hd2) * orbitSpeed * dt;
+                var hSpd = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.z * this.velocity.z);
+                if (hSpd > orbitSpeed) {
+                    this.velocity.x = (this.velocity.x / hSpd) * orbitSpeed;
+                    this.velocity.z = (this.velocity.z / hSpd) * orbitSpeed;
+                }
+                this.rotation = Math.atan2(dx2, dz2);
+            } else {
+                this.velocity.x *= 0.95;
+                this.velocity.z *= 0.95;
+            }
+            var dy2 = targetY - this.position.y;
+            this.velocity.y += dy2 * 2.0 * dt;
+            this.velocity.y *= 0.92;
             this.tiltX *= 0.95;
             this.tiltZ *= 0.95;
+
+            // Still play rotor sound when hovering nearby
+            if (distToPlayer < 80) {
+                this.playRotorSound();
+            }
         }
 
         // Apply velocity
