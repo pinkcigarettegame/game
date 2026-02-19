@@ -42,17 +42,27 @@
     let carHitCooldown = 0; // Cooldown to prevent multi-hits on same frame
     let impactDrag = 0; // Smooth deceleration from NPC impacts
 
+    // === WEED PICKUP SYSTEM ===
+    let weedPickups = []; // Array of {mesh, position, bobPhase, spinSpeed, life}
+    const WEED_COLLECT_DIST = 3.5; // Auto-collect distance
+    const WEED_LIFETIME = 30; // Seconds before weed despawns
+
     // === GLOBAL PARTICLE PERFORMANCE CAPS ===
     const particleCaps = {
-        bloodParticles: { active: 0, max: 120 },   // Blood spray meshes
-        gibs: { active: 0, max: 20 },               // Body chunk gibs
-        streaks: { active: 0, max: 15 },             // Ground blood streaks
-        pools: { active: 0, max: 8 },                // Blood pools
-        ragdolls: { active: 0, max: 4 },             // Flying ragdoll bodies
-        screenSplats: { active: 0, max: 6 },         // DOM screen blood splatters
-        dollarBills: { active: 0, max: 8 },          // DOM dollar bill elements
-        tracers: { active: 0, max: 12 },             // Gun tracer lines
-        miniSplats: { active: 0, max: 10 },          // Mini blood splats from gibs
+        bloodParticles: { active: 0, max: 80 },    // Blood spray meshes (was 120)
+        gibs: { active: 0, max: 12 },               // Body chunk gibs (was 20)
+        streaks: { active: 0, max: 10 },             // Ground blood streaks (was 15)
+        pools: { active: 0, max: 5 },                // Blood pools (was 8)
+        ragdolls: { active: 0, max: 3 },             // Flying ragdoll bodies (was 4)
+        screenSplats: { active: 0, max: 4 },         // DOM screen blood splatters (was 6)
+        dollarBills: { active: 0, max: 6 },          // DOM dollar bill elements (was 8)
+        tracers: { active: 0, max: 8 },              // Gun tracer lines (was 12)
+        miniSplats: { active: 0, max: 6 },           // Mini blood splats from gibs (was 10)
+        fireTrail: { active: 0, max: 30 },           // Cutscene fire trail particles
+        explosionDebris: { active: 0, max: 40 },     // Cutscene explosion debris
+        heliTracers: { active: 0, max: 4 },          // Helicopter tracer lines
+        gunSparks: { active: 0, max: 8 },            // Gun impact sparks
+        shellCasings: { active: 0, max: 5 },         // Shell casings on ground
     };
     // Make globally accessible for other files
     window.particleCaps = particleCaps;
@@ -144,8 +154,9 @@
 
         input.requestPointerLock();
         
-        // Generate initial chunks and spawn player
+        // Pre-generate and build all initial chunks at once for faster loading
         player.spawn();
+        world.pregenerate(player.position.x, player.position.z);
         catSpawner = new CatSpawner(world, scene, player);
         bongManSpawner = new BongManSpawner(world, scene);
         stripperSpawner = new StripperSpawner(world, scene);
@@ -642,6 +653,9 @@
             // Update car physics
             challenger.updateDriving(dt, input);
             
+            // === WORLD BORDER: Clamp car position ===
+            enforceBorder(challenger.position);
+            
             // Update skid mark fading
             challenger.updateSkidMarks(dt);
             
@@ -795,6 +809,8 @@
                 player.updateCamera();
             } else {
                 player.update(dt, input);
+                // === WORLD BORDER: Clamp player position on foot ===
+                enforceBorder(player.position);
             }
             world.update(player.position.x, player.position.z);
             world.animateWater(dt);
@@ -1007,6 +1023,9 @@
             minimapFrameCounter = 0;
             updateMinimap();
         }
+
+        // Update weed pickups
+        updateWeedPickups(dt);
 
         // Update mission system
         if (missionSystem) missionSystem.update(dt);
@@ -1680,6 +1699,8 @@
                     hitSomething = true;
                     hitCount++;
                     if (copSpawner) copSpawner.addWanted(1);
+                    // Drop weed pickup
+                    spawnWeedPickup(bm.position);
                 }
             }
         }
@@ -3462,6 +3483,164 @@
                 exp.start(t2);
             }, 1500);
         } catch(e) {}
+    }
+
+    // === WEED PICKUP FUNCTIONS ===
+    function spawnWeedPickup(pos) {
+        const group = new THREE.Group();
+        // Green glowing weed nugget
+        const nugGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+        const nugMat = new THREE.MeshBasicMaterial({ color: 0x33cc33, transparent: true, opacity: 0.9 });
+        const nug = new THREE.Mesh(nugGeo, nugMat);
+        group.add(nug);
+        // Leaf accent
+        const leafGeo = new THREE.BoxGeometry(0.5, 0.08, 0.2);
+        const leafMat = new THREE.MeshBasicMaterial({ color: 0x22aa22, transparent: true, opacity: 0.85 });
+        const leaf = new THREE.Mesh(leafGeo, leafMat);
+        leaf.position.y = 0.15;
+        leaf.rotation.z = 0.3;
+        group.add(leaf);
+        const leaf2 = new THREE.Mesh(leafGeo, leafMat);
+        leaf2.position.y = 0.1;
+        leaf2.rotation.z = -0.3;
+        group.add(leaf2);
+        // Glow ring
+        const glowGeo = new THREE.BoxGeometry(0.7, 0.05, 0.7);
+        const glowMat = new THREE.MeshBasicMaterial({ color: 0x44ff44, transparent: true, opacity: 0.3 });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        group.add(glow);
+
+        group.position.set(pos.x, pos.y + 1.0, pos.z);
+        scene.add(group);
+
+        weedPickups.push({
+            mesh: group,
+            position: group.position,
+            bobPhase: Math.random() * Math.PI * 2,
+            life: 0
+        });
+    }
+
+    function updateWeedPickups(dt) {
+        const playerPos = player.position;
+        for (let i = weedPickups.length - 1; i >= 0; i--) {
+            const w = weedPickups[i];
+            w.life += dt;
+            // Bob and spin
+            w.bobPhase += dt * 3;
+            w.mesh.position.y += Math.sin(w.bobPhase) * 0.01;
+            w.mesh.rotation.y += dt * 2;
+            // Glow pulse
+            w.mesh.children[3].material.opacity = 0.2 + Math.sin(w.bobPhase * 1.5) * 0.15;
+
+            // Check collection distance
+            const dx = playerPos.x - w.position.x;
+            const dy = playerPos.y - w.position.y;
+            const dz = playerPos.z - w.position.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+            if (dist < WEED_COLLECT_DIST) {
+                // Collect!
+                player.weed++;
+                if (glock) { glock.money += 1; }
+                player.health = Math.min(player.maxHealth, player.health + 0.5);
+                highLevel = Math.min(1, highLevel + 0.15);
+                // Show pickup message
+                const inviteMsg = document.getElementById('invite-message');
+                if (inviteMsg) {
+                    inviteMsg.textContent = `🌿 +1 WEED! +$1 +0.5HP (Total: ${player.weed}) 🌿`;
+                    inviteMsg.classList.remove('active');
+                    inviteMsg.style.display = 'none';
+                    void inviteMsg.offsetWidth;
+                    inviteMsg.style.display = 'block';
+                    inviteMsg.classList.add('active');
+                    setTimeout(() => { inviteMsg.classList.remove('active'); inviteMsg.style.display = 'none'; }, 1500);
+                }
+                // Play collection sound
+                playWeedCollectSound();
+                // Remove pickup
+                scene.remove(w.mesh);
+                w.mesh.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+                weedPickups.splice(i, 1);
+                continue;
+            }
+
+            // Despawn after lifetime
+            if (w.life > WEED_LIFETIME) {
+                scene.remove(w.mesh);
+                w.mesh.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+                weedPickups.splice(i, 1);
+            }
+        }
+    }
+
+    function playWeedCollectSound() {
+        try {
+            const ctx = getAudioCtx();
+            const t = ctx.currentTime;
+            // Sparkly ascending chime
+            for (let i = 0; i < 3; i++) {
+                const osc = ctx.createOscillator();
+                osc.type = 'sine';
+                const offset = i * 0.08;
+                osc.frequency.setValueAtTime(600 + i * 200, t + offset);
+                osc.frequency.linearRampToValueAtTime(800 + i * 200, t + offset + 0.1);
+                const g = ctx.createGain();
+                g.gain.setValueAtTime(0.12, t + offset);
+                g.gain.linearRampToValueAtTime(0, t + offset + 0.15);
+                osc.connect(g); g.connect(ctx.destination);
+                osc.start(t + offset); osc.stop(t + offset + 0.2);
+            }
+        } catch(e) {}
+    }
+
+    // Expose spawnWeedPickup globally so glock.js can call it
+    window.spawnWeedPickup = function(pos) { spawnWeedPickup(pos); };
+
+    // === WORLD BORDER ENFORCEMENT ===
+    let borderWarningShown = 0;
+    function enforceBorder(pos) {
+        if (!world) return;
+        const border = window.WORLD_BORDER || 512;
+        const warningDist = 30; // Show warning when this close to border
+        
+        let clamped = false;
+        if (pos.x > border) { pos.x = border; clamped = true; }
+        if (pos.x < -border) { pos.x = -border; clamped = true; }
+        if (pos.z > border) { pos.z = border; clamped = true; }
+        if (pos.z < -border) { pos.z = -border; clamped = true; }
+        
+        // Show/hide border warning
+        const distToBorder = Math.min(
+            border - Math.abs(pos.x),
+            border - Math.abs(pos.z)
+        );
+        
+        let borderMsg = document.getElementById('border-warning');
+        if (!borderMsg) {
+            borderMsg = document.createElement('div');
+            borderMsg.id = 'border-warning';
+            borderMsg.style.cssText = 'position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:300;' +
+                'font-family:Impact,sans-serif;font-size:32px;color:#ff4444;text-align:center;pointer-events:none;' +
+                'text-shadow:0 0 20px #ff0000,0 0 40px #ff0000,2px 2px 0 #000;display:none;opacity:0;transition:opacity 0.3s;';
+            document.body.appendChild(borderMsg);
+        }
+        
+        if (distToBorder < warningDist) {
+            borderMsg.textContent = '🚧 EDGE OF THE WORLD 🚧';
+            borderMsg.style.display = 'block';
+            borderMsg.style.opacity = String(Math.min(1, (warningDist - distToBorder) / 15));
+            
+            // Slow down car at border
+            if (clamped && challenger && drivingMode) {
+                challenger.speed *= 0.9;
+            }
+        } else {
+            borderMsg.style.display = 'none';
+            borderMsg.style.opacity = '0';
+        }
+        
+        return clamped;
     }
 
     function spawnChallenger() {

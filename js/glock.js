@@ -402,6 +402,8 @@ class Glock {
                     if (this.copSpawner) this.copSpawner.addWanted(0.1);
                     if (bm.health <= 0) {
                         bm.alive = false;
+                        // Drop weed pickup
+                        if (window.spawnWeedPickup) window.spawnWeedPickup(bm.position);
                         bm.dispose();
                         this.bongManSpawner.bongMen.splice(i, 1);
                         this.registerKill();

@@ -35,6 +35,7 @@ class Player {
         this.maxHealth = 20;
         this.health = this.maxHealth;
         this.dead = false;
+        this.weed = 0; // Weed collected from bongmen
         this.damageFlash = 0; // red flash timer
         this.invulnerable = 0; // invulnerability frames after damage
 

@@ -414,81 +414,100 @@ class PoliceMotorcycle {
     // Find the nearest road waypoint to navigate toward the player via roads
     getNextRoadWaypoint(playerPos) {
         var myRoad = this.getRoadInfo(this.position.x, this.position.z);
-        var playerRoad = this.getRoadInfo(playerPos.x, playerPos.z);
         var ROAD_SPACING = myRoad.roadSpacing;
 
         var distToPlayer = this.position.distanceTo(playerPos);
         var dx = playerPos.x - this.position.x;
         var dz = playerPos.z - this.position.z;
 
-        // If close to player, go direct (leave road if needed)
-        if (distToPlayer < 25) {
+        // If very close to player, go direct (leave road if needed)
+        if (distToPlayer < 20) {
             return { x: playerPos.x, z: playerPos.z, direct: true };
         }
 
-        // If we're on a road, navigate via the road network
-        if (myRoad.onRoad) {
-            // At an intersection: pick the road that reduces the larger offset to the player
-            if (myRoad.isIntersection) {
-                if (Math.abs(dx) > Math.abs(dz)) {
-                    // Need to close X gap: travel along X-aligned road (stays at zRoadCenter, moves in X)
-                    return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
-                } else {
-                    // Need to close Z gap: travel along Z-aligned road (stays at xRoadCenter, moves in Z)
-                    return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
-                }
-            }
-
-            // On Z-aligned road only (position.x ≈ xRoadCenter, can move freely in Z)
-            if (myRoad.onXRoad && !myRoad.onZRoad) {
-                // Check if player is roughly on the same Z-aligned road
-                if (Math.abs(dz) < ROAD_SPACING * 0.15) {
-                    // Player is near our Z level - head along Z toward them
-                    return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
-                }
-                // Need to turn onto an X-aligned road to change Z
-                // Find nearest X-aligned road intersection (where Z-roads cross)
-                var nearestCrossZ = Math.round(this.position.z / ROAD_SPACING) * ROAD_SPACING;
-                // Pick the intersection in the direction of the player
-                var dzToNearest = nearestCrossZ - this.position.z;
-                if (Math.abs(dzToNearest) < 3) {
-                    // Already at intersection but not detected - pick next one toward player
-                    nearestCrossZ += (dz > 0 ? ROAD_SPACING : -ROAD_SPACING);
-                } else if (dz > 0 && nearestCrossZ < this.position.z) {
-                    nearestCrossZ += ROAD_SPACING;
-                } else if (dz < 0 && nearestCrossZ > this.position.z) {
-                    nearestCrossZ -= ROAD_SPACING;
-                }
-                return { x: myRoad.xRoadCenter, z: nearestCrossZ, direct: false };
-            }
-
-            // On X-aligned road only (position.z ≈ zRoadCenter, can move freely in X)
-            if (myRoad.onZRoad && !myRoad.onXRoad) {
-                // Check if player is roughly on the same X-aligned road
-                if (Math.abs(dx) < ROAD_SPACING * 0.15) {
-                    // Player is near our X level - head along X toward them
-                    return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
-                }
-                // Need to turn onto a Z-aligned road to change X
-                var nearestCrossX = Math.round(this.position.x / ROAD_SPACING) * ROAD_SPACING;
-                var dxToNearest = nearestCrossX - this.position.x;
-                if (Math.abs(dxToNearest) < 3) {
-                    nearestCrossX += (dx > 0 ? ROAD_SPACING : -ROAD_SPACING);
-                } else if (dx > 0 && nearestCrossX < this.position.x) {
-                    nearestCrossX += ROAD_SPACING;
-                } else if (dx < 0 && nearestCrossX > this.position.x) {
-                    nearestCrossX -= ROAD_SPACING;
-                }
-                return { x: nearestCrossX, z: myRoad.zRoadCenter, direct: false };
+        // Not on a road - navigate to the nearest road first (urgently)
+        if (!myRoad.onRoad) {
+            if (myRoad.distFromXRoad < myRoad.distFromZRoad) {
+                return { x: myRoad.xRoadCenter, z: this.position.z, direct: false };
+            } else {
+                return { x: this.position.x, z: myRoad.zRoadCenter, direct: false };
             }
         }
 
-        // Not on a road - navigate to the nearest road first
-        if (myRoad.distFromXRoad < myRoad.distFromZRoad) {
-            return { x: myRoad.xRoadCenter, z: this.position.z, direct: false };
-        } else {
-            return { x: this.position.x, z: myRoad.zRoadCenter, direct: false };
+        // === ON A ROAD: Navigate via road network ===
+
+        // At an intersection: pick the road that reduces distance to player most efficiently
+        if (myRoad.isIntersection) {
+            // Calculate which direction (X or Z) has the bigger gap to close
+            var absX = Math.abs(dx);
+            var absZ = Math.abs(dz);
+            if (absX > absZ) {
+                // Need to close X gap: travel along X-aligned road (constant Z, move in X)
+                return { x: this.position.x + Math.sign(dx) * 30, z: myRoad.zRoadCenter, direct: false };
+            } else {
+                // Need to close Z gap: travel along Z-aligned road (constant X, move in Z)
+                return { x: myRoad.xRoadCenter, z: this.position.z + Math.sign(dz) * 30, direct: false };
+            }
         }
+
+        // On a Z-aligned road (X is fixed near xRoadCenter, free to move in Z)
+        if (myRoad.onXRoad && !myRoad.onZRoad) {
+            // Check if player is roughly on the same road (similar X)
+            var playerRoad = this.getRoadInfo(playerPos.x, playerPos.z);
+            if (playerRoad.onXRoad && Math.abs(playerRoad.xRoadCenter - myRoad.xRoadCenter) < 10) {
+                // Same road! Head straight toward player along Z
+                return { x: myRoad.xRoadCenter, z: playerPos.z, direct: false };
+            }
+            // Need to reach an intersection to switch roads
+            // Find the nearest intersection in the direction of the player
+            var bestCrossZ = Math.round(this.position.z / ROAD_SPACING) * ROAD_SPACING;
+            // If we're very close to this intersection, pick the NEXT one toward the player
+            if (Math.abs(bestCrossZ - this.position.z) < 8) {
+                // We're at/near an intersection - head toward the player's Z
+                if (Math.abs(dz) > 10) {
+                    bestCrossZ += Math.sign(dz) * ROAD_SPACING;
+                }
+                // But first check: should we turn here? (player is far in X direction)
+                if (Math.abs(dx) > ROAD_SPACING * 0.3) {
+                    // Turn onto the X-road at this intersection
+                    return { x: this.position.x + Math.sign(dx) * 30, z: Math.round(this.position.z / ROAD_SPACING) * ROAD_SPACING, direct: false };
+                }
+            } else {
+                // Head to the nearest intersection (in the direction that helps reach the player)
+                if (dz > 0 && bestCrossZ < this.position.z) bestCrossZ += ROAD_SPACING;
+                else if (dz < 0 && bestCrossZ > this.position.z) bestCrossZ -= ROAD_SPACING;
+            }
+            return { x: myRoad.xRoadCenter, z: bestCrossZ, direct: false };
+        }
+
+        // On an X-aligned road (Z is fixed near zRoadCenter, free to move in X)
+        if (myRoad.onZRoad && !myRoad.onXRoad) {
+            // Check if player is roughly on the same road (similar Z)
+            var playerRoad2 = this.getRoadInfo(playerPos.x, playerPos.z);
+            if (playerRoad2.onZRoad && Math.abs(playerRoad2.zRoadCenter - myRoad.zRoadCenter) < 10) {
+                // Same road! Head straight toward player along X
+                return { x: playerPos.x, z: myRoad.zRoadCenter, direct: false };
+            }
+            // Need to reach an intersection to switch roads
+            var bestCrossX = Math.round(this.position.x / ROAD_SPACING) * ROAD_SPACING;
+            if (Math.abs(bestCrossX - this.position.x) < 8) {
+                // Near an intersection
+                if (Math.abs(dx) > 10) {
+                    bestCrossX += Math.sign(dx) * ROAD_SPACING;
+                }
+                // Should we turn here?
+                if (Math.abs(dz) > ROAD_SPACING * 0.3) {
+                    return { x: Math.round(this.position.x / ROAD_SPACING) * ROAD_SPACING, z: this.position.z + Math.sign(dz) * 30, direct: false };
+                }
+            } else {
+                if (dx > 0 && bestCrossX < this.position.x) bestCrossX += ROAD_SPACING;
+                else if (dx < 0 && bestCrossX > this.position.x) bestCrossX -= ROAD_SPACING;
+            }
+            return { x: bestCrossX, z: myRoad.zRoadCenter, direct: false };
+        }
+
+        // Fallback: head toward player
+        return { x: playerPos.x, z: playerPos.z, direct: true };
     }
 
     update(dt, playerPos, wantedLevel) {
@@ -547,26 +566,32 @@ class PoliceMotorcycle {
             this.onGround = true;
         }
 
-        // === STUCK DETECTION (faster, more aggressive recovery) ===
+        // === STUCK DETECTION (fast, aggressive recovery) ===
         this.stuckTimer += dt;
-        if (this.stuckTimer > 0.8) {
+        if (this.stuckTimer > 0.5) {
             var movedDist = this.position.distanceTo(this.stuckCheckPos);
-            if (movedDist < 0.8 && this.speed > 1) {
+            if (movedDist < 0.5 && this.speed > 1) {
                 this.stuckCount++;
-                if (this.stuckCount >= 3) {
+                if (this.stuckCount >= 2) {
                     // Very stuck - teleport to nearest road toward player
-                    var myRoad = this.getRoadInfo(this.position.x, this.position.z);
-                    if (myRoad.distFromXRoad < myRoad.distFromZRoad) {
-                        this.position.x = myRoad.xRoadCenter;
+                    var stuckRoad = this.getRoadInfo(this.position.x, this.position.z);
+                    if (stuckRoad.distFromXRoad < stuckRoad.distFromZRoad) {
+                        this.position.x = stuckRoad.xRoadCenter;
                     } else {
-                        this.position.z = myRoad.zRoadCenter;
+                        this.position.z = stuckRoad.zRoadCenter;
                     }
+                    // Also face toward the player
+                    var toPx = playerPos.x - this.position.x;
+                    var toPz = playerPos.z - this.position.z;
+                    this.rotation = Math.atan2(toPx, toPz);
                     this.stuckCount = 0;
-                    this.speed = 10;
+                    this.speed = 12;
                 } else {
-                    // Turn sharply and boost speed
-                    this.rotation += (Math.random() > 0.5 ? 1 : -1) * Math.PI * 0.8;
-                    this.speed = Math.max(this.speed, 10);
+                    // Turn sharply toward player and boost speed
+                    var toPx2 = playerPos.x - this.position.x;
+                    var toPz2 = playerPos.z - this.position.z;
+                    this.rotation = Math.atan2(toPx2, toPz2);
+                    this.speed = Math.max(this.speed, 12);
                 }
             } else {
                 this.stuckCount = Math.max(0, this.stuckCount - 1);
@@ -575,17 +600,27 @@ class PoliceMotorcycle {
             this.stuckTimer = 0;
         }
 
-        // === PERIODIC ROAD CORRECTION (keep motorcycle on road) ===
+        // === PERIODIC ROAD CORRECTION (keep motorcycle on road - more frequent and stronger) ===
         this.lastRoadCorrection += dt;
-        if (this.lastRoadCorrection > 2.0 && this.chasing) {
+        if (this.lastRoadCorrection > 0.5 && this.chasing) {
             this.lastRoadCorrection = 0;
             var roadInfo = this.getRoadInfo(this.position.x, this.position.z);
             if (!roadInfo.onRoad) {
-                // Off-road! Gently nudge back toward nearest road
+                // Off-road! Strongly nudge back toward nearest road
+                var correctionStrength = 0.5; // 50% correction per check
                 if (roadInfo.distFromXRoad < roadInfo.distFromZRoad) {
-                    this.position.x += (roadInfo.xRoadCenter - this.position.x) * 0.3;
+                    this.position.x += (roadInfo.xRoadCenter - this.position.x) * correctionStrength;
                 } else {
-                    this.position.z += (roadInfo.zRoadCenter - this.position.z) * 0.3;
+                    this.position.z += (roadInfo.zRoadCenter - this.position.z) * correctionStrength;
+                }
+            } else if (!roadInfo.isIntersection) {
+                // On road but not at intersection - gently center on road
+                var centerStrength = 0.15;
+                if (roadInfo.onXRoad) {
+                    this.position.x += (roadInfo.xRoadCenter - this.position.x) * centerStrength;
+                }
+                if (roadInfo.onZRoad) {
+                    this.position.z += (roadInfo.zRoadCenter - this.position.z) * centerStrength;
                 }
             }
         }

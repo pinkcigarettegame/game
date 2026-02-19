@@ -111,80 +111,51 @@ class Chunk {
 
     // Check if a world position is within the Mt. Takedown mountain zone
     getMountainHeight(wx, wz) {
-        // Mountain center at (256, 256) - at a road intersection
-        const MTN_X = 256;
-        const MTN_Z = 256;
-        const MTN_RADIUS = 45; // Total radius of mountain base
-        const MTN_PEAK = 58;   // Peak height (block Y)
-        const MTN_BASE = 28;   // Base height (roughly ground level)
-        const RAMP_WIDTH = 6;  // Width of the spiral ramp
+        const dx = wx - 256;
+        const dz = wz - 256;
+        const distSq = dx * dx + dz * dz;
         
-        const dx = wx - MTN_X;
-        const dz = wz - MTN_Z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
+        // Fast squared-distance check (50^2 = 2500)
+        if (distSq > 2500) return null;
         
-        if (dist > MTN_RADIUS + 5) return null; // Not in mountain zone
+        const dist = Math.sqrt(distSq);
+        if (dist > 50) return null;
         
-        // Mountain cone shape with smooth falloff
-        let mtnHeight = null;
-        if (dist <= MTN_RADIUS) {
-            // Smooth mountain profile: steep near top, gentle at base
-            const t = 1 - dist / MTN_RADIUS; // 1 at center, 0 at edge
-            const profile = t * t * (3 - 2 * t); // smoothstep
-            mtnHeight = Math.floor(MTN_BASE + (MTN_PEAK - MTN_BASE) * profile);
-        } else {
-            // Smooth blend zone at edges
-            const blend = 1 - (dist - MTN_RADIUS) / 5;
-            if (blend > 0) {
-                mtnHeight = Math.floor(MTN_BASE * blend + MTN_BASE * (1 - blend));
+        const MTN_RADIUS = 45;
+        const MTN_PEAK = 58;
+        const MTN_BASE = 28;
+        
+        // Peak area - flat landing pad with jump ramp
+        if (dist <= 5) {
+            if (dz < -1 && dz > -5 && Math.abs(dx) < 3) {
+                return { height: Math.floor(MTN_PEAK + ((-dz - 1) / 3) * 4), isRamp: true, isPeak: true };
             }
+            return { height: MTN_PEAK, isRamp: false, isPeak: true };
         }
         
-        // Spiral ramp carved into the mountain
-        // The ramp spirals from base to peak, making ~2.5 full rotations
-        if (dist > 3 && dist < MTN_RADIUS - 1) {
-            const angle = Math.atan2(dz, dx); // -PI to PI
-            const normalizedAngle = (angle + Math.PI) / (2 * Math.PI); // 0 to 1
+        // Mountain cone shape
+        let mtnHeight = null;
+        if (dist <= MTN_RADIUS) {
+            const t = 1 - dist / MTN_RADIUS;
+            mtnHeight = Math.floor(MTN_BASE + (MTN_PEAK - MTN_BASE) * t * t * (3 - 2 * t));
+        } else {
+            return { height: MTN_BASE, isRamp: false, isPeak: false };
+        }
+        
+        // Spiral ramp - check if this column is on the ramp
+        if (dist > 3 && dist < MTN_RADIUS - 1 && mtnHeight !== null) {
+            const normalizedAngle = (Math.atan2(dz, dx) + Math.PI) / (2 * Math.PI);
+            const heightPerRot = (MTN_PEAK - MTN_BASE) / 2.5;
             
-            // Ramp height increases with angle + number of rotations
-            // Total rotations: 2.5 turns from base to peak
-            const totalRotations = 2.5;
-            const heightPerRotation = (MTN_PEAK - MTN_BASE) / totalRotations;
-            
-            // For each possible rotation level, check if this position is on the ramp
-            for (let rot = 0; rot < totalRotations; rot++) {
-                const rampBaseHeight = MTN_BASE + (rot + normalizedAngle) * heightPerRotation;
-                const rampHeight = Math.floor(rampBaseHeight);
-                
-                // Check if the mountain surface at this distance matches the ramp height
-                // The ramp is carved where the mountain surface is near the ramp height
-                const surfaceHeight = mtnHeight;
-                if (surfaceHeight !== null && Math.abs(surfaceHeight - rampHeight) < RAMP_WIDTH) {
-                    // This position is on or near the ramp - flatten to ramp height
-                    const rampDist = Math.abs(surfaceHeight - rampHeight);
-                    if (rampDist < RAMP_WIDTH / 2) {
-                        return { height: rampHeight, isRamp: true, isPeak: false };
-                    }
+            for (let rot = 0; rot < 3; rot++) {
+                const rampHeight = Math.floor(MTN_BASE + (rot + normalizedAngle) * heightPerRot);
+                if (Math.abs(mtnHeight - rampHeight) < 3) {
+                    return { height: rampHeight, isRamp: true, isPeak: false };
                 }
             }
         }
         
-        // Peak area - flat landing pad at the top with a jump ramp
-        if (dist <= 5) {
-            // Flat peak
-            const peakHeight = MTN_PEAK;
-            // Jump ramp at the edge of the peak (north side)
-            if (dz < -1 && dz > -5 && Math.abs(dx) < 3) {
-                const rampProgress = (-dz - 1) / 3; // 0 at center, 1 at edge
-                return { height: Math.floor(peakHeight + rampProgress * 4), isRamp: true, isPeak: true };
-            }
-            return { height: peakHeight, isRamp: false, isPeak: true };
-        }
-        
-        if (mtnHeight !== null) {
-            return { height: mtnHeight, isRamp: false, isPeak: false };
-        }
-        return null;
+        return { height: mtnHeight, isRamp: false, isPeak: false };
     }
 
     generate(noise) {
@@ -632,6 +603,9 @@ class Chunk {
 // Fixed world seed so all multiplayer clients generate identical terrain
 const WORLD_SEED = 42069;
 
+// World border limits (blocks)
+const WORLD_BORDER = 512; // -512 to +512 in both X and Z
+
 class World {
     constructor(scene, seed) {
         this.scene = scene;
@@ -640,6 +614,62 @@ class World {
         this.chunks = {};
         this.blockTextures = new BlockTextures();
         this.pendingChunks = [];
+        this._pregenDone = false;
+    }
+
+    // Pre-generate and build all chunks within render distance at once
+    pregenerate(playerX, playerZ) {
+        const pcx = Math.floor(playerX / CHUNK_SIZE);
+        const pcz = Math.floor(playerZ / CHUNK_SIZE);
+
+        // Generate all chunk block data first
+        for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
+            for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
+                const cx = pcx + dx;
+                const cz = pcz + dz;
+                const key = this.getChunkKey(cx, cz);
+                if (!this.chunks[key]) {
+                    const chunk = new Chunk(cx, cz, this);
+                    this.chunks[key] = chunk;
+                    chunk.generate(this.noise);
+                }
+            }
+        }
+
+        // Build all meshes
+        for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
+            for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
+                const cx = pcx + dx;
+                const cz = pcz + dz;
+                const chunk = this.getChunk(cx, cz);
+                if (chunk && chunk.dirty && chunk.generated) {
+                    chunk.buildMesh(this.blockTextures);
+                }
+            }
+        }
+
+        this._pregenDone = true;
+    }
+
+    // Check if a position is within world borders
+    isInBounds(x, z) {
+        return x >= -WORLD_BORDER && x <= WORLD_BORDER && z >= -WORLD_BORDER && z <= WORLD_BORDER;
+    }
+
+    // Clamp a position to world borders, returns clamped {x, z}
+    clampToBorder(x, z) {
+        return {
+            x: Math.max(-WORLD_BORDER, Math.min(WORLD_BORDER, x)),
+            z: Math.max(-WORLD_BORDER, Math.min(WORLD_BORDER, z))
+        };
+    }
+
+    // Get distance to nearest border edge (0 = at border, positive = inside)
+    distanceToBorder(x, z) {
+        return Math.min(
+            WORLD_BORDER - Math.abs(x),
+            WORLD_BORDER - Math.abs(z)
+        );
     }
 
     getChunkKey(cx, cz) {
@@ -703,9 +733,10 @@ class World {
 
         // Build/rebuild dirty chunk meshes (limit per frame for performance)
         let built = 0;
+        const maxBuildsPerFrame = this._pregenDone ? 2 : 8; // Build more during initial load
         for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
             for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
-                if (built >= 2) break; // Max 2 chunk builds per frame
+                if (built >= maxBuildsPerFrame) break;
                 const cx = pcx + dx;
                 const cz = pcz + dz;
                 const chunk = this.getChunk(cx, cz);
@@ -901,3 +932,4 @@ window.CHUNK_SIZE = CHUNK_SIZE;
 window.CHUNK_HEIGHT = CHUNK_HEIGHT;
 window.WATER_LEVEL = WATER_LEVEL;
 window.RENDER_DISTANCE = RENDER_DISTANCE;
+window.WORLD_BORDER = WORLD_BORDER;
