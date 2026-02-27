@@ -2900,12 +2900,13 @@
         const origCarSpeed = challenger.speed;
         const heliPos = heli.position.clone();
 
-        // Calculate launch trajectory toward helicopter
+        // Calculate initial launch direction toward helicopter (direct aim)
         const launchDir = new THREE.Vector3(
             heliPos.x - origCarPos.x,
-            heliPos.y - origCarPos.y + 8,
+            heliPos.y - origCarPos.y,
             heliPos.z - origCarPos.z
         ).normalize();
+        const initialDist = origCarPos.distanceTo(heliPos);
 
         // Show cinematic bars
         showCinematicBars();
@@ -2936,14 +2937,16 @@
 
         let phase = 0;
         let timer = 0;
-        let carVelY = 18;
-        const gravity = -8; // Slower gravity for more hang time
+        let missileSpeed = 35; // Starting speed - accelerates toward helicopter
+        const maxMissileSpeed = 80; // Top speed at impact
         let camAngle = 0;
-        let slowMo = 0.4; // Start in slow motion
+        let slowMo = 0.3; // Start in slow motion for dramatic effect
         let impactPos = null;
         let reward = 0;
         let fireParticles = [];
         let debrisParticles = [];
+        let carNosePitch = 0; // For aiming the car's nose at the helicopter
+        let fallVelY = 0; // Used in Phase 2 for car falling back down
 
         // Spawn trailing fire/smoke from car during launch
         function spawnTrailParticle() {
@@ -3054,62 +3057,82 @@
             }
 
             if (phase === 0) {
-                // === PHASE 0: SLOW-MO LAUNCH (0-1.5s real time) ===
+                // === PHASE 0: MISSILE FLIGHT - Car flies directly into helicopter ===
                 // Gradually speed up from slow-mo
-                slowMo = Math.min(1, 0.4 + timer * 0.4);
+                slowMo = Math.min(1, 0.3 + timer * 0.5);
 
-                challenger.position.x += launchDir.x * 30 * dt;
-                challenger.position.y += carVelY * dt;
-                challenger.position.z += launchDir.z * 30 * dt;
-                carVelY += gravity * dt;
+                // === HOMING MISSILE: Continuously aim at helicopter's current position ===
+                const currentDir = new THREE.Vector3(
+                    heli.position.x - challenger.position.x,
+                    heli.position.y - challenger.position.y,
+                    heli.position.z - challenger.position.z
+                );
+                const distToHeli = currentDir.length();
+                currentDir.normalize();
 
-                // Dramatic barrel roll
-                challenger.rotation += 0.12 * slowMo;
+                // Accelerate as we approach (builds tension, max speed at impact)
+                const approachProgress = 1 - Math.min(1, distToHeli / initialDist);
+                missileSpeed = Math.min(maxMissileSpeed, 35 + approachProgress * 50);
+
+                // Move car directly toward helicopter (homing missile trajectory)
+                challenger.position.x += currentDir.x * missileSpeed * dt;
+                challenger.position.y += currentDir.y * missileSpeed * dt;
+                challenger.position.z += currentDir.z * missileSpeed * dt;
+
+                // === NOSE-FIRST ORIENTATION: Point car's front at the helicopter ===
+                // Y rotation: face the helicopter horizontally
+                const targetYaw = Math.atan2(currentDir.x, currentDir.z);
+                challenger.rotation = targetYaw;
+                // X rotation (pitch): tilt nose up/down to aim at helicopter
+                const targetPitch = -Math.asin(Math.max(-1, Math.min(1, currentDir.y)));
+                carNosePitch += (targetPitch - carNosePitch) * 0.15; // Smooth pitch transition
+
                 challenger.mesh.position.copy(challenger.position);
-                challenger.mesh.rotation.y = challenger.rotation;
-                // Tilt the car for barrel roll effect
-                challenger.mesh.rotation.z = Math.sin(timer * 4) * 0.3;
-                challenger.mesh.rotation.x = Math.sin(timer * 3) * 0.15;
+                challenger.mesh.rotation.y = challenger.rotation + Math.PI; // Car faces -Z in local space
+                challenger.mesh.rotation.x = carNosePitch;
+                // Slight banking roll for dramatic effect (like a fighter jet)
+                challenger.mesh.rotation.z = Math.sin(timer * 5) * 0.15 * (1 - approachProgress);
 
-                // Spawn fire trail
-                if (Math.random() < 0.6) spawnTrailParticle();
+                // Spawn intense fire trail (more particles as speed increases)
+                const trailChance = 0.5 + approachProgress * 0.4;
+                if (Math.random() < trailChance) spawnTrailParticle();
+                if (approachProgress > 0.5 && Math.random() < 0.4) spawnTrailParticle(); // Extra trail at high speed
 
-                // === CINEMATIC CAMERA: Orbiting dramatic angle ===
-                camAngle += 1.8 * dt;
-                const camDist = 12 + Math.sin(timer * 2) * 4; // Breathing distance
-                const camHeight = 2 + Math.sin(timer * 1.5) * 3;
-                const camX = challenger.position.x + Math.sin(camAngle) * camDist;
-                const camY = challenger.position.y + camHeight;
-                const camZ = challenger.position.z + Math.cos(camAngle) * camDist;
-                camera.position.set(camX, camY, camZ);
+                // === CINEMATIC CAMERA: Behind car looking forward (over-the-shoulder missile cam) ===
+                const behindDist = 10 - approachProgress * 4; // Camera gets closer as we approach
+                const camBehindX = challenger.position.x - currentDir.x * behindDist;
+                const camBehindY = challenger.position.y - currentDir.y * behindDist + 2 + Math.sin(timer * 2) * 1;
+                const camBehindZ = challenger.position.z - currentDir.z * behindDist;
+                camera.position.set(camBehindX, camBehindY, camBehindZ);
 
-                // Look slightly ahead of the car (anticipation)
-                const lookAhead = challenger.position.clone().add(launchDir.clone().multiplyScalar(5));
-                camera.lookAt(lookAhead);
+                // Look ahead past the car toward the helicopter
+                const lookTarget = challenger.position.clone().add(currentDir.clone().multiplyScalar(8));
+                camera.lookAt(lookTarget);
 
-                // Dramatic FOV zoom
-                camera.fov = 60 + Math.sin(timer * 3) * 10;
+                // FOV increases with speed (tunnel vision effect)
+                camera.fov = 55 + approachProgress * 25;
                 camera.updateProjectionMatrix();
 
-                // === CINEMATIC CAMERA SWITCH: When close, switch to side-view showing both car and heli ===
-                const distToHeli = challenger.position.distanceTo(heli.position);
-                if (distToHeli < 25 && distToHeli > 10) {
-                    // Approaching - camera positioned to see BOTH car and helicopter
-                    const midPoint = challenger.position.clone().lerp(heli.position, 0.5);
+                // === CAMERA SWITCH: Side angle when close to show both car and heli ===
+                if (distToHeli < 20 && distToHeli > 5) {
+                    // Dramatic side angle showing car streaking toward helicopter
+                    const midPoint = challenger.position.clone().lerp(heli.position, 0.4);
                     const perpX = -(heli.position.z - challenger.position.z);
                     const perpZ = (heli.position.x - challenger.position.x);
                     const perpLen = Math.sqrt(perpX * perpX + perpZ * perpZ) || 1;
+                    const sideOffset = 14 - (20 - distToHeli) * 0.3; // Tighten as we get closer
                     camera.position.set(
-                        midPoint.x + (perpX / perpLen) * 18,
-                        midPoint.y + 3,
-                        midPoint.z + (perpZ / perpLen) * 18
+                        midPoint.x + (perpX / perpLen) * sideOffset,
+                        midPoint.y + 2 + Math.sin(timer * 3) * 1,
+                        midPoint.z + (perpZ / perpLen) * sideOffset
                     );
                     camera.lookAt(midPoint);
-                    camera.fov = 55; // Tighter framing
+                    camera.fov = 50; // Tight dramatic framing
                     camera.updateProjectionMatrix();
                 }
 
-                if (distToHeli < 10 || timer > 2.5) {
+                // === IMPACT: Car reaches the helicopter ===
+                if (distToHeli < 5 || timer > 3.0) {
                     phase = 1;
                     timer = 0;
                     slowMo = 0.12; // EXTREME slow-mo for impact
@@ -3294,8 +3317,9 @@
                 }
             } else if (phase === 2) {
                 // === PHASE 2: CAR FALLS BACK DOWN (0-3s) ===
-                carVelY += -18 * 0.016;
-                challenger.position.y += carVelY * 0.016;
+                if (!fallVelY) fallVelY = 0;
+                fallVelY += -18 * 0.016;
+                challenger.position.y += fallVelY * 0.016;
                 challenger.rotation += 0.03;
 
                 // Drift back toward mountain

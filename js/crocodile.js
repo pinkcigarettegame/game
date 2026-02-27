@@ -337,8 +337,8 @@ class CrocodileSpawner {
         this.player = player;
         this.crocodiles = [];
         this.maxCrocs = 8;
-        this.spawnCooldown = 0;
-        this.spawnInterval = 8;
+        this.spawnCooldown = 2; // Start trying to spawn quickly after game start
+        this.spawnInterval = 4; // Try every 4 seconds (was 8) since most attempts may fail to find water
     }
 
     update(dt, playerPos) {
@@ -366,24 +366,37 @@ class CrocodileSpawner {
     }
 
     trySpawn(playerPos) {
-        // Spawn in water near the player
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 25 + Math.random() * 35;
-        const sx = playerPos.x + Math.cos(angle) * dist;
-        const sz = playerPos.z + Math.sin(angle) * dist;
+        // Try multiple random positions to find water near the player
+        // Water only exists in low-lying terrain (below WATER_LEVEL), so most random
+        // positions will be dry land. We try several attempts to find a valid water spot.
+        for (let attempt = 0; attempt < 12; attempt++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 20 + Math.random() * 40;
+            const sx = playerPos.x + Math.cos(angle) * dist;
+            const sz = playerPos.z + Math.sin(angle) * dist;
 
-        // Check that this position is actually water
-        const blockAtWater = this.world.getBlock(Math.floor(sx), WATER_LEVEL - 1, Math.floor(sz));
-        if (blockAtWater !== BlockType.WATER) return;
+            // Check multiple water depths to find any water at this position
+            // Water fills from terrain height up to WATER_LEVEL
+            let foundWater = false;
+            for (let checkY = WATER_LEVEL - 1; checkY >= WATER_LEVEL - 5; checkY--) {
+                const block = this.world.getBlock(Math.floor(sx), checkY, Math.floor(sz));
+                if (block === BlockType.WATER) {
+                    foundWater = true;
+                    break;
+                }
+            }
+            if (!foundWater) continue;
 
-        // Make sure there's water depth (not just surface)
-        const blockBelow = this.world.getBlock(Math.floor(sx), WATER_LEVEL - 3, Math.floor(sz));
-        const isDeepEnough = (blockBelow === BlockType.WATER || blockBelow === BlockType.SAND || blockBelow === BlockType.DIRT || blockBelow === BlockType.STONE);
-        if (!isDeepEnough) return;
+            // Make sure there's water depth (not just a single layer)
+            const blockBelow = this.world.getBlock(Math.floor(sx), WATER_LEVEL - 3, Math.floor(sz));
+            const isDeepEnough = (blockBelow === BlockType.WATER || blockBelow === BlockType.SAND || blockBelow === BlockType.DIRT || blockBelow === BlockType.STONE);
+            if (!isDeepEnough) continue;
 
-        const sy = WATER_LEVEL - 0.3;
-        const croc = new Crocodile(this.world, this.scene, sx, sy, sz, this.player);
-        this.crocodiles.push(croc);
+            const sy = WATER_LEVEL - 0.3;
+            const croc = new Crocodile(this.world, this.scene, sx, sy, sz, this.player);
+            this.crocodiles.push(croc);
+            return; // Successfully spawned
+        }
     }
 
     getCount() {
