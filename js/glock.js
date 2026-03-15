@@ -256,6 +256,167 @@ class Glock {
         }
     }
 
+    // === RIFLE UPGRADE ===
+    upgradeToRifle() {
+        if (this.isRifle) return; // Already upgraded
+        this.isRifle = true;
+
+        // Upgraded stats - significantly better than the Glock
+        this.damage = 12;          // Was 5 - more than double damage
+        this.range = 150;          // Was 80 - almost double range
+        this.fireRate = 0.1;       // Was 0.15 - faster fire rate
+        this.magazineSize = 30;    // Was 17 - bigger magazine
+        this.currentAmmo = 30;
+        this.reloadTime = 2.0;     // Slightly longer reload (bigger mag)
+
+        // Rebuild the gun model to look like a rifle
+        this.camera.remove(this.gunGroup);
+        this.gunGroup.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+        });
+
+        this.gunGroup = this.createRifleModel();
+        this.gunGroup.visible = this.equipped;
+        this.camera.add(this.gunGroup);
+
+        // Recreate muzzle flash on new model
+        this.muzzleFlash = this.createMuzzleFlash();
+        this.muzzleFlash.visible = false;
+        this.gunGroup.add(this.muzzleFlash);
+
+        // Update ammo display
+        this.updateAmmoDisplay();
+
+        // Update the ammo icon to show rifle
+        const ammoIcon = document.getElementById('ammo-icon');
+        if (ammoIcon) ammoIcon.textContent = '🎯';
+    }
+
+    createRifleModel() {
+        const group = new THREE.Group();
+
+        // === RIFLE BODY (longer, sleeker than glock) ===
+        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+        const accentMat = new THREE.MeshLambertMaterial({ color: 0x00ccff }); // Crypto blue accent
+
+        // Main receiver (longer than glock slide)
+        const receiverGeo = new THREE.BoxGeometry(0.06, 0.07, 0.45);
+        const receiver = new THREE.Mesh(receiverGeo, bodyMat);
+        receiver.position.set(0, 0, -0.1);
+        group.add(receiver);
+
+        // Barrel (long)
+        const barrelGeo = new THREE.BoxGeometry(0.035, 0.035, 0.3);
+        const barrel = new THREE.Mesh(barrelGeo, bodyMat);
+        barrel.position.set(0, -0.005, -0.45);
+        group.add(barrel);
+
+        // Barrel shroud / handguard
+        const shroudGeo = new THREE.BoxGeometry(0.055, 0.055, 0.2);
+        const shroudMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+        const shroud = new THREE.Mesh(shroudGeo, shroudMat);
+        shroud.position.set(0, -0.005, -0.35);
+        group.add(shroud);
+
+        // Handguard ventilation slots (blue accent)
+        for (let i = 0; i < 3; i++) {
+            const slotGeo = new THREE.BoxGeometry(0.057, 0.015, 0.03);
+            const slot = new THREE.Mesh(slotGeo, accentMat);
+            slot.position.set(0, 0.02, -0.3 - i * 0.06);
+            group.add(slot);
+        }
+
+        // Stock (extends behind grip)
+        const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.18);
+        const stock = new THREE.Mesh(stockGeo, bodyMat);
+        stock.position.set(0, 0, 0.2);
+        group.add(stock);
+
+        // Stock pad
+        const padGeo = new THREE.BoxGeometry(0.055, 0.07, 0.02);
+        const padMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const pad = new THREE.Mesh(padGeo, padMat);
+        pad.position.set(0, 0, 0.3);
+        group.add(pad);
+
+        // Grip (pistol grip style)
+        const gripMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+        const gripGeo = new THREE.BoxGeometry(0.05, 0.13, 0.06);
+        const grip = new THREE.Mesh(gripGeo, gripMat);
+        grip.position.set(0, -0.1, 0.05);
+        grip.rotation.x = 0.25;
+        group.add(grip);
+
+        // Trigger guard
+        const guardGeo = new THREE.BoxGeometry(0.02, 0.035, 0.05);
+        const guard = new THREE.Mesh(guardGeo, bodyMat);
+        guard.position.set(0, -0.055, -0.01);
+        group.add(guard);
+
+        // Trigger
+        const triggerGeo = new THREE.BoxGeometry(0.012, 0.025, 0.012);
+        const triggerMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
+        const trigger = new THREE.Mesh(triggerGeo, triggerMat);
+        trigger.position.set(0, -0.045, 0.0);
+        group.add(trigger);
+
+        // Magazine (visible, extends below receiver)
+        const magGeo = new THREE.BoxGeometry(0.04, 0.12, 0.06);
+        const magMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const mag = new THREE.Mesh(magGeo, magMat);
+        mag.position.set(0, -0.1, -0.08);
+        mag.rotation.x = 0.05;
+        group.add(mag);
+
+        // Scope / red dot sight
+        const scopeBaseGeo = new THREE.BoxGeometry(0.04, 0.03, 0.1);
+        const scopeBaseMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const scopeBase = new THREE.Mesh(scopeBaseGeo, scopeBaseMat);
+        scopeBase.position.set(0, 0.05, -0.05);
+        group.add(scopeBase);
+
+        // Scope tube
+        const scopeTubeGeo = new THREE.BoxGeometry(0.03, 0.03, 0.08);
+        const scopeTube = new THREE.Mesh(scopeTubeGeo, scopeBaseMat);
+        scopeTube.position.set(0, 0.065, -0.05);
+        group.add(scopeTube);
+
+        // Scope lens (glowing red dot)
+        const lensGeo = new THREE.BoxGeometry(0.02, 0.02, 0.005);
+        const lensMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.9 });
+        const lens = new THREE.Mesh(lensGeo, lensMat);
+        lens.position.set(0, 0.065, -0.095);
+        group.add(lens);
+
+        // Front sight (on barrel tip)
+        const frontSightGeo = new THREE.BoxGeometry(0.012, 0.018, 0.012);
+        const frontSightMat = new THREE.MeshBasicMaterial({ color: 0x00ff88 }); // Green front sight
+        const frontSight = new THREE.Mesh(frontSightGeo, frontSightMat);
+        frontSight.position.set(0, 0.03, -0.58);
+        group.add(frontSight);
+
+        // Muzzle brake
+        const muzzleGeo = new THREE.BoxGeometry(0.045, 0.045, 0.04);
+        const muzzleMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const muzzle = new THREE.Mesh(muzzleGeo, muzzleMat);
+        muzzle.position.set(0, -0.005, -0.61);
+        group.add(muzzle);
+
+        // Crypto accent stripe on receiver
+        const stripeGeo = new THREE.BoxGeometry(0.062, 0.008, 0.2);
+        const stripe = new THREE.Mesh(stripeGeo, accentMat);
+        stripe.position.set(0, -0.03, -0.1);
+        group.add(stripe);
+
+        // Position the rifle in first-person view (bottom right) - BIGGER
+        group.position.set(0.35, -0.3, -0.55);
+        group.scale.set(1.8, 1.8, 1.8);
+        group.rotation.set(0, 0, 0);
+
+        return group;
+    }
+
     playGunshot() {
         const now = Date.now();
         if (now - this.lastShotTime < 80) return;

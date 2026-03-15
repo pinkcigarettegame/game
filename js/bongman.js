@@ -338,14 +338,27 @@ class BongMan {
             this.wanderDir.set(Math.cos(angle), 0, Math.sin(angle));
             this.wanderTimer = 2 + Math.random() * 3;
         }
-        this.position.y += this.velocity.y * dt;
-        if (this.checkCollision()) {
-            if (this.velocity.y < 0) {
-                this.position.y = Math.floor(this.position.y - 0.01) + 1.001;
-                this.onGround = true;
-            } else { this.position.y = oldPos.y; }
-            this.velocity.y = 0;
-        } else { this.onGround = false; }
+        // Y movement with substeps to prevent falling through blocks
+        const yDistB = this.velocity.y * dt;
+        const yStepsB = Math.max(1, Math.ceil(Math.abs(yDistB) / 0.5));
+        const yStepB = yDistB / yStepsB;
+        let yCollidedB = false;
+        for (let si = 0; si < yStepsB; si++) {
+            this.position.y += yStepB;
+            if (this.checkCollision()) {
+                if (this.velocity.y < 0) {
+                    for (let probe = this.position.y; probe <= oldPos.y + 1; probe += 0.1) {
+                        this.position.y = probe;
+                        if (!this.checkCollision()) break;
+                    }
+                    this.onGround = true;
+                } else { this.position.y -= yStepB; }
+                this.velocity.y = 0;
+                yCollidedB = true;
+                break;
+            }
+        }
+        if (!yCollidedB) { this.onGround = false; }
         this.position.z += this.velocity.z * dt;
         if (this.checkCollision()) {
             this.position.z = oldPos.z;
@@ -390,7 +403,7 @@ class BongMan {
 
     checkCollision() {
         const hw = 0.2;
-        for (let dy = this.position.y - 0.01; dy <= this.position.y + 1.4; dy += 0.7) {
+        for (let dy = this.position.y - 0.01; dy <= this.position.y + 1.4; dy += 0.45) {
             for (let dx = -hw; dx <= hw; dx += hw * 2) {
                 for (let dz = -hw; dz <= hw; dz += hw * 2) {
                     const block = this.world.getBlock(

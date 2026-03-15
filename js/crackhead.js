@@ -449,16 +449,29 @@ class Crackhead {
             }
         }
 
-        this.position.y += this.velocity.y * dt;
-        if (this.checkCollision()) {
-            if (this.velocity.y < 0) {
-                this.position.y = Math.floor(this.position.y - 0.01) + 1.001;
-                this.onGround = true;
-            } else {
-                this.position.y = oldPos.y;
+        // Y movement with substeps to prevent falling through blocks
+        const yDist = this.velocity.y * dt;
+        const ySteps = Math.max(1, Math.ceil(Math.abs(yDist) / 0.5));
+        const yStep = yDist / ySteps;
+        let yCollided = false;
+        for (let si = 0; si < ySteps; si++) {
+            this.position.y += yStep;
+            if (this.checkCollision()) {
+                if (this.velocity.y < 0) {
+                    for (let probe = this.position.y; probe <= oldPos.y + 1; probe += 0.1) {
+                        this.position.y = probe;
+                        if (!this.checkCollision()) break;
+                    }
+                    this.onGround = true;
+                } else {
+                    this.position.y -= yStep;
+                }
+                this.velocity.y = 0;
+                yCollided = true;
+                break;
             }
-            this.velocity.y = 0;
-        } else {
+        }
+        if (!yCollided) {
             this.onGround = false;
         }
 
@@ -511,7 +524,7 @@ class Crackhead {
         const feetY = this.position.y - 0.01;
         const headY = this.position.y + 1.4;
 
-        for (let dy = feetY; dy <= headY; dy += 0.7) {
+        for (let dy = feetY; dy <= headY; dy += 0.45) {
             for (let dx = -hw; dx <= hw; dx += hw * 2) {
                 for (let dz = -hw; dz <= hw; dz += hw * 2) {
                     const bx = Math.floor(this.position.x + dx);

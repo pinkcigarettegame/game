@@ -690,14 +690,27 @@ class Stripper {
                 this.position.x = oldGuardPos.x;
                 if (this.onGround) { this.velocity.y = 7; this.onGround = false; }
             }
-            this.position.y += this.velocity.y * dt;
-            if (this.checkCollision()) {
-                if (this.velocity.y < 0) {
-                    this.position.y = Math.floor(this.position.y - 0.01) + 1.001;
-                    this.onGround = true;
-                } else { this.position.y = oldGuardPos.y; }
-                this.velocity.y = 0;
-            } else { this.onGround = false; }
+            // Y movement with substeps (guard)
+            const yDistG = this.velocity.y * dt;
+            const yStepsG = Math.max(1, Math.ceil(Math.abs(yDistG) / 0.5));
+            const yStepG = yDistG / yStepsG;
+            let yCollidedG = false;
+            for (let si = 0; si < yStepsG; si++) {
+                this.position.y += yStepG;
+                if (this.checkCollision()) {
+                    if (this.velocity.y < 0) {
+                        for (let probe = this.position.y; probe <= oldGuardPos.y + 1; probe += 0.1) {
+                            this.position.y = probe;
+                            if (!this.checkCollision()) break;
+                        }
+                        this.onGround = true;
+                    } else { this.position.y -= yStepG; }
+                    this.velocity.y = 0;
+                    yCollidedG = true;
+                    break;
+                }
+            }
+            if (!yCollidedG) { this.onGround = false; }
             this.position.z += this.velocity.z * dt;
             if (this.checkCollision()) {
                 this.position.z = oldGuardPos.z;
@@ -859,14 +872,27 @@ class Stripper {
                 this.wanderTimer = 1 + Math.random() * 2;
             }
         }
-        this.position.y += this.velocity.y * dt;
-        if (this.checkCollision()) {
-            if (this.velocity.y < 0) {
-                this.position.y = Math.floor(this.position.y - 0.01) + 1.001;
-                this.onGround = true;
-            } else { this.position.y = oldPos.y; }
-            this.velocity.y = 0;
-        } else { this.onGround = false; }
+        // Y movement with substeps to prevent falling through blocks
+        const yDistS = this.velocity.y * dt;
+        const yStepsS = Math.max(1, Math.ceil(Math.abs(yDistS) / 0.5));
+        const yStepS = yDistS / yStepsS;
+        let yCollidedS = false;
+        for (let si = 0; si < yStepsS; si++) {
+            this.position.y += yStepS;
+            if (this.checkCollision()) {
+                if (this.velocity.y < 0) {
+                    for (let probe = this.position.y; probe <= oldPos.y + 1; probe += 0.1) {
+                        this.position.y = probe;
+                        if (!this.checkCollision()) break;
+                    }
+                    this.onGround = true;
+                } else { this.position.y -= yStepS; }
+                this.velocity.y = 0;
+                yCollidedS = true;
+                break;
+            }
+        }
+        if (!yCollidedS) { this.onGround = false; }
         this.position.z += this.velocity.z * dt;
         if (this.checkCollision()) {
             this.position.z = oldPos.z;
@@ -910,7 +936,7 @@ class Stripper {
 
     checkCollision() {
         const hw = 0.15;
-        for (let dy = this.position.y - 0.01; dy <= this.position.y + 1.5; dy += 0.7) {
+        for (let dy = this.position.y - 0.01; dy <= this.position.y + 1.5; dy += 0.45) {
             for (let dx = -hw; dx <= hw; dx += hw * 2) {
                 for (let dz = -hw; dz <= hw; dz += hw * 2) {
                     const block = this.world.getBlock(

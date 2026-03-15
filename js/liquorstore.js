@@ -759,7 +759,8 @@ class LiquorStore {
                 { key: '2', name: 'Ethereum Whiskey', emoji: '🥃', price: 25, heal: 8, effect: 'speed', desc: 'Heals 8 HP + Speed boost' },
                 { key: '3', name: 'Doge Champagne', emoji: '🍾', price: 50, heal: 20, effect: 'strippers', desc: 'Full heal + Spawns strippers' },
                 { key: '4', name: 'Shitcoin Moonshine', emoji: '🧪', price: 15, heal: 5, effect: 'high', desc: 'Heals 5 HP + Gets you high' },
-                { key: '5', name: 'STRIP CLUB', emoji: '🏪', price: 1500, heal: 0, effect: 'stripclub', desc: 'Buy a strip club! Deposits all strippers as score' }
+                { key: '5', name: 'STRIP CLUB', emoji: '🏪', price: 1500, heal: 0, effect: 'stripclub', desc: 'Buy a strip club! Deposits all strippers as score' },
+                { key: '6', name: 'Crypto Rifle', emoji: '🔫', price: 200, heal: 0, effect: 'rifle', desc: 'Better gun! +DMG, +Range, +Mag, Faster fire' }
             ];
         }
         return LiquorStore._menuItems;

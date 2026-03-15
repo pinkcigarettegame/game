@@ -516,7 +516,21 @@ class PoliceHelicopter {
 
             // Shoot at player when in range
             if (horizontalDist < this.attackRange && this.attackCooldown <= 0 && this.player) {
-                this.player.takeDamage(this.damage);
+                // Speed-based damage reduction: driving fast makes you harder to hit
+                var actualDamage = this.damage;
+                if (this.player.driving && this.player.drivingCar) {
+                    var carSpeed = Math.abs(this.player.drivingCar.speed);
+                    // At max speed (~15+), reduce damage by up to 80%
+                    var speedReduction = Math.min(0.8, carSpeed / 18);
+                    actualDamage = this.damage * (1 - speedReduction);
+                    // At very high speed (>12), chance to completely miss
+                    if (carSpeed > 12 && Math.random() < 0.4) {
+                        actualDamage = 0; // Miss! Too fast!
+                    }
+                }
+                if (actualDamage > 0) {
+                    this.player.takeDamage(actualDamage);
+                }
                 this.playShot();
                 this.attackCooldown = this.attackInterval;
                 this.createMuzzleFlash();

@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pink Cigarette World — Driving Loop</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #000;
+            cursor: none;
+        }
+        canvas { display: block; }
+        #loading {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(180deg, #FFB0C8 0%, #e06090 40%, #c04080 40.5%, #901050 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            font-family: 'Segoe UI', Arial, sans-serif;
+            transition: opacity 1.5s ease;
+        }
+        #loading h1 {
+            font-size: 64px;
+            letter-spacing: 4px;
+            animation: pulse 2s ease-in-out infinite;
+            margin-bottom: 20px;
+        }
+        #loading p {
+            font-size: 18px;
+            color: #ffccdd;
+            animation: blink 1.5s ease-in-out infinite;
+        }
+        #loading .bar-container {
+            width: 300px;
+            height: 6px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 3px;
+            margin-top: 20px;
+            overflow: hidden;
+        }
+        #loading .bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #ff69b4, #ffb6c1, #ff69b4);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        /* Vignette overlay */
+        #vignette {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.4) 100%);
+        }
+        /* Title overlay */
+        #title-overlay {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            pointer-events: none;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+            opacity: 0;
+            transition: opacity 2s ease;
+        }
+        #title-overlay.visible { opacity: 1; }
+        #title-overlay h2 {
+            font-size: 28px;
+            color: #ff69b4;
+            text-shadow: 0 0 20px rgba(255,105,180,0.8), 0 0 40px rgba(255,105,180,0.4);
+            letter-spacing: 6px;
+        }
+        #title-overlay p {
+            font-size: 12px;
+            color: rgba(255,182,193,0.6);
+            margin-top: 6px;
+            letter-spacing: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <h1>🚬 Pink Cigarette World</h1>
+        <p>Loading the vibe...</p>
+        <div class="bar-container"><div class="bar-fill" id="load-bar"></div></div>
+    </div>
+    <div id="vignette"></div>
+    <div id="title-overlay">
+        <h2>🚬 PINK CIGARETTE WORLD 🚬</h2>
+        <p>ENDLESS DRIVE</p>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Reuse existing game modules -->
+    <script src="js/crypto-prices.js"></script>
+    <script src="js/simplex-noise.js"></script>
+    <script src="js/block.js"></script>
+    <script src="js/world.js"></script>
+    <script src="js/car.js"></script>
+    <script src="js/billboard.js"></script>
+    <script src="js/liquorstore.js"></script>
+
+    <script>
+    // ============================================================
+    //  PINK CIGARETTE WORLD — PASSIVE DRIVING LOOP
+    //  A car drives endlessly through the pink world,
+    //  passing crypto billboards and liquor stores.
+    // ============================================================
+
+    (function() {
+        'use strict';
+
+        // --- CONFIG ---
+        const CAR_SPEED = 14;            // blocks/sec (steady cruising speed)
+        const ROAD_X = 0;                // X position of the Z-aligned road (road at x=0)
+        const CAMERA_DISTANCE = 12;      // Behind the car
+        const CAMERA_HEIGHT = 6;         // Above the car
+        const CAMERA_SWAY_SPEED = 0.15;  // Gentle sway frequency
+        const CAMERA_SWAY_AMP = 1.5;     // Sway amplitude (side to side)
+        const CAMERA_BOB_AMP = 0.3;      // Vertical bob
+        const FOG_NEAR = 30;
+        const FOG_FAR = 90;
+        const SPAWN_AHEAD = 80;          // How far ahead to spawn structures
+        const DESPAWN_BEHIND = 40;       // How far behind to despawn
+        const STRUCTURE_INTERVAL = 55;   // Blocks between structures
+        const PRELOAD_DISTANCE = 6;      // Chunks to preload
+        const WORLD_RESET_Z = -450;      // Reset car position before hitting world border (512)
+
+        // --- GLOBALS ---
+        let scene, camera, renderer, world;
+        let car;
+        let clock;
+        let carZ = 0;                    // Current Z position of the car (drives in -Z direction)
+        let totalTime = 0;
+        let structures = [];             // { obj, z, type, side }
+        let nextStructureZ = -30;        // Next Z to spawn a structure
+        let structureIndex = 0;
+        let started = false;
+        let loadProgress = 0;
+
+        // --- INIT ---
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+
+            // Pink sky background
+            scene.background = new THREE.Color(0xd06090);
+
+            // Pink fog for smooth horizon
+            scene.fog = new THREE.Fog(0xc05080, FOG_NEAR, FOG_FAR);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 150);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = false;
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting — warm pink ambient + directional sun
+            const ambientLight = new THREE.AmbientLight(0xffaacc, 0.6);
+            scene.add(ambientLight);
+
+            const sunLight = new THREE.DirectionalLight(0xffd0e0, 0.9);
+            sunLight.position.set(50, 80, -30);
+            scene.add(sunLight);
+
+            // Secondary fill light from below/side for neon feel
+            const fillLight = new THREE.DirectionalLight(0xff69b4, 0.3);
+            fillLight.position.set(-30, 10, 20);
+            scene.add(fillLight);
+
+            // Hemisphere light for sky/ground color bleed
+            const hemiLight = new THREE.HemisphereLight(0xffb0c8, 0x904060, 0.4);
+            scene.add(hemiLight);
+
+            // Clock
+            clock = new THREE.Clock();
+
+            // World
+            world = new World(scene);
+
+            // Start crypto price fetcher
+            if (window.cryptoPriceFetcher) {
+                window.cryptoPriceFetcher.start();
+            }
+
+            // Handle resize
+            window.addEventListener('resize', onResize);
+
+            // Start loading
+            loadWorld();
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- LOAD WORLD ---
+        function loadWorld() {
+            // We need to pregenerate chunks along the road the car will drive on
+            // The car drives along the Z-aligned road at x=0 (nearest road to origin)
+            // Road spacing is 128, so the road at x=0 is the nearest Z-aligned road
+
+            const ROAD_SPACING = 128;
+            const nearestRoadX = Math.round(ROAD_X / ROAD_SPACING) * ROAD_SPACING; // = 0
+
+            // Pregenerate chunks in a corridor along the road
+            const startZ = 50;   // Start a bit behind
+            const endZ = -200;   // Preload ahead
+            const pcx = Math.floor(nearestRoadX / CHUNK_SIZE);
+
+            let chunksToGen = [];
+            for (let cz = Math.floor(endZ / CHUNK_SIZE) - 1; cz <= Math.floor(startZ / CHUNK_SIZE) + 1; cz++) {
+                for (let cx = pcx - PRELOAD_DISTANCE; cx <= pcx + PRELOAD_DISTANCE; cx++) {
+                    chunksToGen.push({ cx, cz });
+                }
+            }
+
+            let genIndex = 0;
+            const totalChunks = chunksToGen.length;
+
+            function genBatch() {
+                const batchSize = 4;
+                for (let i = 0; i < batchSize && genIndex < totalChunks; i++, genIndex++) {
+                    const { cx, cz } = chunksToGen[genIndex];
+                    const key = world.getChunkKey(cx, cz);
+                    if (!world.chunks[key]) {
+                        const chunk = new Chunk(cx, cz, world);
+                        world.chunks[key] = chunk;
+                        chunk.generate(world.noise);
+                    }
+                }
+
+                loadProgress = genIndex / totalChunks;
+                const bar = document.getElementById('load-bar');
+                if (bar) bar.style.width = (loadProgress * 100) + '%';
+
+                if (genIndex < totalChunks) {
+                    requestAnimationFrame(genBatch);
+                } else {
+                    // Build all chunk meshes
+                    buildAllMeshes();
+                    startDriving();
+                }
+            }
+
+            requestAnimationFrame(genBatch);
+        }
+
+        function buildAllMeshes() {
+            for (const key in world.chunks) {
+                const chunk = world.chunks[key];
+                if (chunk && chunk.dirty && chunk.generated) {
+                    chunk.buildMesh(world.blockTextures);
+                }
+            }
+        }
+
+        // --- START DRIVING ---
+        function startDriving() {
+            // Find the road surface height at the starting position
+            const ROAD_SPACING = 128;
+            const roadX = Math.round(ROAD_X / ROAD_SPACING) * ROAD_SPACING;
+
+            // Get road height
+            const startZ = 0;
+            const roadHeight = world.getSpawnHeight(roadX, startZ);
+
+            // Create the car
+            car = new DodgeChallenger(scene, world, roadX, roadHeight, startZ, 0);
+            carZ = startZ;
+
+            // Force-initialize crypto fetcher with fallback data so billboards render immediately
+            // Real API data will replace this when it arrives
+            const fetcher = window.cryptoPriceFetcher;
+            if (fetcher && !fetcher.initialized) {
+                fetcher.prices = {};
+                for (const coinId of Object.keys(fetcher.allCoins)) {
+                    if (fetcher.fallbackPrices[coinId]) {
+                        fetcher.prices[coinId] = { ...fetcher.fallbackPrices[coinId] };
+                    }
+                }
+                fetcher.initialized = true;
+            }
+            if (fetcher && !fetcher.sparklinesInitialized) {
+                fetcher.sparklines = {};
+                for (const coinId of Object.keys(fetcher.allCoins)) {
+                    if (fetcher.fallbackSparklines[coinId]) {
+                        fetcher.sparklines[coinId] = [...fetcher.fallbackSparklines[coinId]];
+                    }
+                }
+                fetcher.sparklinesInitialized = true;
+            }
+
+            // Spawn initial structures
+            nextStructureZ = carZ - 30;
+            for (let i = 0; i < 6; i++) {
+                spawnNextStructure();
+            }
+
+            // Fade out loading screen
+            const loading = document.getElementById('loading');
+            if (loading) {
+                loading.style.opacity = '0';
+                setTimeout(() => {
+                    loading.style.display = 'none';
+                }, 1500);
+            }
+
+            // Show title overlay
+            setTimeout(() => {
+                const title = document.getElementById('title-overlay');
+                if (title) title.classList.add('visible');
+                // Fade it out after a while
+                setTimeout(() => {
+                    if (title) title.classList.remove('visible');
+                }, 8000);
+            }, 2000);
+
+            started = true;
+            animate();
+        }
+
+        // --- SPAWN STRUCTURES ---
+        function spawnNextStructure() {
+            const ROAD_SPACING = 128;
+            const roadX = Math.round(ROAD_X / ROAD_SPACING) * ROAD_SPACING;
+            const BILLBOARD_SETBACK = 8;  // Billboards closer to road for visibility
+            const STORE_SETBACK = 15;     // Liquor stores need more room (parking lot)
+            const ANGLE_OFFSET = Math.PI / 4; // 45° angle toward oncoming traffic
+
+            const z = nextStructureZ;
+            nextStructureZ -= STRUCTURE_INTERVAL;
+            structureIndex++;
+
+            // Alternate sides and types
+            const side = (structureIndex % 2 === 0) ? 1 : -1; // +X or -X side
+            const isBillboard = (structureIndex % 3 !== 0); // 2/3 billboards, 1/3 liquor stores
+
+            const setback = isBillboard ? BILLBOARD_SETBACK : STORE_SETBACK;
+            const x = roadX + side * setback;
+
+            // Rotation: face the road, angled toward the approaching car (coming from +Z)
+            let rotation;
+            if (isBillboard) {
+                if (side > 0) {
+                    rotation = -Math.PI / 2 + ANGLE_OFFSET;
+                } else {
+                    rotation = Math.PI / 2 - ANGLE_OFFSET;
+                }
+            } else {
+                rotation = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+            }
+
+            // Ensure terrain is generated at this position
+            ensureChunksAt(x, z);
+
+            // Get the ROAD surface height — this is the target level for structures
+            let roadY = world.getRoadSurfaceHeight(roadX, z);
+            if (!roadY || roadY <= WATER_LEVEL + 2) {
+                roadY = world.getSpawnHeight(roadX, z);
+            }
+
+            // Flatten terrain between road and structure to road level
+            // This prevents floating (terrain too low) and blocking (terrain too high)
+            const flatRadius = isBillboard ? 6 : 12; // Billboard needs less, store needs more
+            flattenTerrainAt(x, z, flatRadius, roadY);
+
+            // Place structure at road level
+            const groundY = roadY;
+
+            if (isBillboard) {
+                try {
+                    const billboard = new CryptoBillboard(scene, world, x, groundY, z, rotation);
+                    structures.push({ obj: billboard, z: z, type: 'billboard' });
+                } catch(e) {
+                    // Silently skip if billboard fails
+                }
+            } else {
+                try {
+                    const store = new LiquorStore(scene, world, x, groundY, z, rotation);
+                    structures.push({ obj: store, z: z, type: 'store' });
+                } catch(e) {
+                    // Silently skip if store fails
+                }
+            }
+
+            // Immediately rebuild affected chunks so changes are visible
+            rebuildChunksNearImmediate(x, z);
+        }
+
+        // Flatten terrain around a position to a target height
+        // Fills blocks below targetY, clears blocks above targetY
+        function flattenTerrainAt(cx, cz, radius, targetY) {
+            const ty = Math.round(targetY);
+            for (let dx = -radius; dx <= radius; dx++) {
+                for (let dz = -radius; dz <= radius; dz++) {
+                    const bx = Math.round(cx) + dx;
+                    const bz = Math.round(cz) + dz;
+
+                    // Clear everything above target height (cut into hills)
+                    for (let y = ty; y < ty + 25; y++) {
+                        const block = world.getBlock(bx, y, bz);
+                        if (block && block !== BlockType.AIR && block !== BlockType.WATER) {
+                            world.setBlock(bx, y, bz, BlockType.AIR);
+                        }
+                    }
+
+                    // Fill below target height so structures don't float
+                    for (let y = ty - 1; y >= ty - 15; y--) {
+                        const block = world.getBlock(bx, y, bz);
+                        if (!block || block === BlockType.AIR) {
+                            world.setBlock(bx, y, bz, BlockType.STONE);
+                        } else {
+                            break; // Hit solid ground, stop filling
+                        }
+                    }
+                }
+            }
+        }
+
+        // Immediately rebuild chunk meshes near a position
+        function rebuildChunksNearImmediate(x, z) {
+            const cx = Math.floor(x / CHUNK_SIZE);
+            const cz = Math.floor(z / CHUNK_SIZE);
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    const chunk = world.getChunk(cx + dx, cz + dz);
+                    if (chunk && chunk.generated) {
+                        chunk.buildMesh(world.blockTextures);
+                    }
+                }
+            }
+        }
+
+        function ensureChunksAt(x, z) {
+            const cx = Math.floor(x / CHUNK_SIZE);
+            const cz = Math.floor(z / CHUNK_SIZE);
+
+            for (let dx = -2; dx <= 2; dx++) {
+                for (let dz = -2; dz <= 2; dz++) {
+                    const key = world.getChunkKey(cx + dx, cz + dz);
+                    if (!world.chunks[key]) {
+                        const chunk = new Chunk(cx + dx, cz + dz, world);
+                        world.chunks[key] = chunk;
+                        chunk.generate(world.noise);
+                        chunk.buildMesh(world.blockTextures);
+                    }
+                }
+            }
+        }
+
+        // --- ANIMATE ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.05); // Cap delta time
+            totalTime += dt;
+
+            if (!started || !car) return;
+
+            // --- Move car forward (in -Z direction, which is "forward" for rotation=0) ---
+            carZ -= CAR_SPEED * dt;
+
+            // --- WORLD LOOP: Reset position when approaching world border ---
+            if (carZ < WORLD_RESET_Z) {
+                // Dispose all structures
+                for (const s of structures) {
+                    if (s.obj && s.obj.dispose) {
+                        try { s.obj.dispose(); } catch(e) {}
+                    }
+                }
+                structures = [];
+
+                // Reset car position back to start
+                carZ = 0;
+                nextStructureZ = carZ - 30;
+                structureIndex = 0;
+
+                // Spawn fresh structures ahead
+                for (let i = 0; i < 6; i++) {
+                    spawnNextStructure();
+                }
+            }
+
+            // Update car position
+            const ROAD_SPACING = 128;
+            const roadX = Math.round(ROAD_X / ROAD_SPACING) * ROAD_SPACING;
+
+            // Get road height at current position
+            ensureChunksAt(roadX, carZ);
+            const groundY = world.getSpawnHeight(roadX, carZ);
+
+            // Smooth vertical following
+            const targetY = groundY;
+            car.position.y += (targetY - car.position.y) * Math.min(1, 8 * dt);
+            car.position.x = roadX;
+            car.position.z = carZ;
+            car.rotation = 0; // Always facing -Z
+
+            // Sample terrain for pitch
+            const aheadY = world.getSpawnHeight(roadX, carZ - 3);
+            const behindY = world.getSpawnHeight(roadX, carZ + 3);
+            const targetPitch = Math.atan2(behindY - aheadY, 6) * 0.5;
+            car.pitch = car.pitch || 0;
+            car.pitch += (targetPitch - car.pitch) * Math.min(1, 4 * dt);
+
+            // Update car mesh
+            car.mesh.position.copy(car.position);
+            car.mesh.rotation.order = 'YXZ';
+            car.mesh.rotation.y = car.rotation;
+            car.mesh.rotation.x = car.pitch;
+            car.mesh.rotation.z = 0;
+
+            // --- Cinematic camera ---
+            const swayX = Math.sin(totalTime * CAMERA_SWAY_SPEED) * CAMERA_SWAY_AMP;
+            const swayX2 = Math.sin(totalTime * CAMERA_SWAY_SPEED * 0.7 + 1.5) * CAMERA_SWAY_AMP * 0.4;
+            const bobY = Math.sin(totalTime * CAMERA_SWAY_SPEED * 1.3 + 0.8) * CAMERA_BOB_AMP;
+
+            const camX = car.position.x + swayX + swayX2;
+            const camZ = car.position.z + CAMERA_DISTANCE;
+            const camY = car.position.y + CAMERA_HEIGHT + bobY;
+
+            // Ensure camera doesn't clip terrain
+            const camGroundY = world.getSpawnHeight(camX, camZ);
+            const finalCamY = Math.max(camY, camGroundY + 3);
+
+            camera.position.set(camX, finalCamY, camZ);
+
+            // Look slightly ahead of the car
+            const lookX = car.position.x + swayX * 0.2;
+            const lookY = car.position.y + 1.5;
+            const lookZ = car.position.z - 5;
+            camera.lookAt(lookX, lookY, lookZ);
+
+            // --- Spawn structures ahead ---
+            // Keep spawning until we have structures far enough ahead of the car
+            while (nextStructureZ > carZ - SPAWN_AHEAD) {
+                spawnNextStructure();
+            }
+
+            // Despawn old structures
+            for (let i = structures.length - 1; i >= 0; i--) {
+                const s = structures[i];
+                if (s.z > carZ + DESPAWN_BEHIND) {
+                    if (s.obj && s.obj.dispose) {
+                        s.obj.dispose();
+                    }
+                    structures.splice(i, 1);
+                }
+            }
+
+            // --- Update structures ---
+            const playerPos = car.position;
+            for (const s of structures) {
+                if (s.obj && s.obj.update) {
+                    try {
+                        s.obj.update(dt, playerPos);
+                    } catch(e) {}
+                }
+            }
+
+            // --- Update world chunks (generate ahead, unload behind) ---
+            world.update(car.position.x, car.position.z);
+
+            // Build any dirty chunks (higher limit to handle structure terrain clearing)
+            const pcx = Math.floor(car.position.x / CHUNK_SIZE);
+            const pcz = Math.floor(car.position.z / CHUNK_SIZE);
+            let built = 0;
+            for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
+                for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
+                    if (built >= 4) break;
+                    const chunk = world.getChunk(pcx + dx, pcz + dz);
+                    if (chunk && chunk.dirty && chunk.generated) {
+                        chunk.buildMesh(world.blockTextures);
+                        built++;
+                    }
+                }
+            }
+
+            // Animate water
+            world.animateWater(dt);
+
+            // --- Render ---
+            renderer.render(scene, camera);
+        }
+
+        // --- KICK IT OFF ---
+        init();
+
+    })();
+    </script>
+</body>
+</html>

@@ -669,22 +669,31 @@ class Player {
             }
         }
 
-        // Move Y
+        // Move Y - use substeps for high velocities to prevent falling through blocks
         const oldY = this.position.y;
-        this.position.y += this.velocity.y * dt;
-        if (this.checkCollision()) {
-            if (this.velocity.y < 0) {
-                // Falling down - find the correct ground position
-                const feetY = this.position.y - this.fullHeight;
-                const groundBlockTop = Math.floor(feetY) + 1;
-                this.position.y = groundBlockTop + this.fullHeight;
-                this.onGround = true;
-            } else {
-                // Hit ceiling
-                this.position.y = oldY;
+        const yDist = this.velocity.y * dt;
+        const ySteps = Math.max(1, Math.ceil(Math.abs(yDist) / 0.5)); // substep every 0.5 blocks
+        const yStep = yDist / ySteps;
+        let yCollided = false;
+        for (let s = 0; s < ySteps; s++) {
+            this.position.y += yStep;
+            if (this.checkCollision()) {
+                if (this.velocity.y < 0) {
+                    // Falling down - find the correct ground position by scanning upward
+                    const feetY = this.position.y - this.fullHeight;
+                    const groundBlockTop = Math.floor(feetY) + 1;
+                    this.position.y = groundBlockTop + this.fullHeight;
+                    this.onGround = true;
+                } else {
+                    // Hit ceiling - revert to position before this substep
+                    this.position.y -= yStep;
+                }
+                this.velocity.y = 0;
+                yCollided = true;
+                break;
             }
-            this.velocity.y = 0;
-        } else {
+        }
+        if (!yCollided) {
             // Check if we're still on ground (small downward probe)
             const probeY = this.position.y;
             this.position.y -= 0.05;
@@ -756,9 +765,11 @@ class Player {
                           BlockType.LEAVES, BlockType.CRACK_PIPE_GLASS];
 
         // Check multiple points around the player
-        for (let dy = feetY; dy <= headY; dy += 0.9) {
-            for (let dx = -hw; dx <= hw; dx += this.width) {
-                for (let dz = -hw; dz <= hw; dz += this.width) {
+        // Use step of 0.45 to guarantee every block layer is checked (was 0.9 which skipped blocks)
+        for (let dy = feetY; dy <= headY; dy += 0.45) {
+            // Check 4 corners + center for better coverage (was only 2 points per axis)
+            for (let dx = -hw; dx <= hw; dx += hw) {
+                for (let dz = -hw; dz <= hw; dz += hw) {
                     const bx = Math.floor(this.position.x + dx);
                     const by = Math.floor(dy);
                     const bz = Math.floor(this.position.z + dz);
@@ -766,6 +777,18 @@ class Player {
                     if (!passable.includes(block)) {
                         return true;
                     }
+                }
+            }
+        }
+        // Always check the exact head position too
+        for (let dx = -hw; dx <= hw; dx += hw) {
+            for (let dz = -hw; dz <= hw; dz += hw) {
+                const bx = Math.floor(this.position.x + dx);
+                const by = Math.floor(headY);
+                const bz = Math.floor(this.position.z + dz);
+                const block = this.world.getBlock(bx, by, bz);
+                if (!passable.includes(block)) {
+                    return true;
                 }
             }
         }
